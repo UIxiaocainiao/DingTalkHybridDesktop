@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.pengshz.dingtalk-random-scheduler</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/bin/caffeinate</string>
+        <string>-i</string>
+        <string>/opt/homebrew/bin/python3</string>
+        <string>/Users/pengshz/dingtalk_scheduler/dingtalk_random_scheduler.py</string>
+        <string>--serial</string>
+        <string>4f2094d1</string>
+        <string>--package</string>
+        <string>com.alibaba.android.rimet</string>
+        <string>--adb-bin</string>
+        <string>/opt/homebrew/bin/adb</string>
+        <string>--scrcpy-bin</string>
+        <string>/opt/homebrew/bin/scrcpy</string>
+    </array>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/pengshz/dingtalk_scheduler</string>
+
+    <key>StandardOutPath</key>
+    <string>/Users/pengshz/dingtalk_scheduler/logs/dingtalk-random-scheduler.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/Users/pengshz/dingtalk_scheduler/logs/dingtalk-random-scheduler.err.log</string>
+</dict>
+</plist>

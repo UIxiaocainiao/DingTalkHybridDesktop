@@ -1,0 +1,30 @@
+exec: No such file or directory
+ERROR: Command not found: [adb], [start-server]
+ERROR: (make 'adb' accessible from your PATH or define its fullpath in the ADB environment variable)
+ERROR: Could not execute "adb start-server"
+ERROR: Could not start adb server
+ERROR: Server connection failed
+exec: No such file or directory
+ERROR: Command not found: [adb], [start-server]
+ERROR: (make 'adb' accessible from your PATH or define its fullpath in the ADB environment variable)
+ERROR: Could not execute "adb start-server"
+ERROR: Could not start adb server
+ERROR: Server connection failed
+exec: No such file or directory
+ERROR: Command not found: [adb], [start-server]
+ERROR: (make 'adb' accessible from your PATH or define its fullpath in the ADB environment variable)
+ERROR: Could not execute "adb start-server"
+ERROR: Could not start adb server
+ERROR: Server connection failed
+exec: No such file or directory
+ERROR: Command not found: [adb], [start-server]
+ERROR: (make 'adb' accessible from your PATH or define its fullpath in the ADB environment variable)
+ERROR: Could not execute "adb start-server"
+ERROR: Could not start adb server
+ERROR: Server connection failed
+/opt/homebrew/Cellar/scrcpy/3.3.4/share/scrcpy/scrcpy-server: 1 file pushed, 0 skipped. 142.7 MB/s (90980 bytes in 0.001s)
+/opt/homebrew/Cellar/scrcpy/3.3.4/share/scrcpy/scrcpy-server: 1 file pushed, 0 skipped. 146.7 MB/s (90980 bytes in 0.001s)
+/opt/homebrew/Cellar/scrcpy/3.3.4/share/scrcpy/scrcpy-server: 1 file pushed, 0 skipped. 125.1 MB/s (90980 bytes in 0.001s)
+/opt/homebrew/Cellar/scrcpy/3.3.4/share/scrcpy/scrcpy-server: 1 file pushed, 0 skipped. 138.8 MB/s (90980 bytes in 0.001s)
+/opt/homebrew/Cellar/scrcpy/3.3.4/share/scrcpy/scrcpy-server: 1 file pushed, 0 skipped. 134.5 MB/s (90980 bytes in 0.001s)
+/opt/homebrew/Cellar/scrcpy/3.3.4/share/scrcpy/scrcpy-server: 1 file pushed, 0 skipped. 155.1 MB/s (90980 bytes in 0.001s)
