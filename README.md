@@ -1,4 +1,4 @@
-# DingTalk Scheduler
+# DingTalk-automatic-check-in
 
 This directory contains the DingTalk automation files.
 
