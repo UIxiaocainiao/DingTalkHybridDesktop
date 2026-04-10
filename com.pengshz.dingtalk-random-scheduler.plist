@@ -17,8 +17,6 @@
         <string>com.alibaba.android.rimet</string>
         <string>--adb-bin</string>
         <string>/opt/homebrew/bin/adb</string>
-        <string>--scrcpy-bin</string>
-        <string>/opt/homebrew/bin/scrcpy</string>
     </array>
 
     <key>RunAtLoad</key>
