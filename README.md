@@ -139,8 +139,8 @@ python3 backend/test_api_integrity.py
 
 ```bash
 cd frontend
-npm install   # 或 pnpm install
-npm run dev   # 或 pnpm dev
+npm install
+npm run dev
 ```
 
 ## macOS 后台自启动（可选）
