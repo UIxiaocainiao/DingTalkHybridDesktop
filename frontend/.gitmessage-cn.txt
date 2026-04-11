@@ -1,0 +1,12 @@
+# 类型: 简述本次改动（例如：feat/fix/refactor/docs/chore）
+# 范围: 可选（例如：frontend/topbar/cursor）
+# 
+# 示例：
+# feat(frontend): 优化顶部固定栏与自定义鼠标效果
+#
+# 变更说明：
+# - 
+# - 
+#
+# 验证：
+# - 
