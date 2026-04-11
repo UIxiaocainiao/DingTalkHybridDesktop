@@ -9,7 +9,6 @@ import {
   CheckCheck,
   CirclePlay,
   Clock3,
-  Cog,
   FileClock,
   FolderCog,
   Gauge,
@@ -229,8 +228,8 @@ function App() {
     return window.localStorage.getItem("sidebar-collapsed") === "1";
   });
   const [activeSection, setActiveSection] = useState("overview");
-  const [topbarTitle, setTopbarTitle] = useState("DingTalk Dashboard");
-  const [topbarTone, setTopbarTone] = useState("brand");
+  const [topbarTitle, setTopbarTitle] = useState("监控总览与执行态势");
+  const [topbarTone, setTopbarTone] = useState("overview");
   const [pendingAction, setPendingAction] = useState("");
   const [configValues, setConfigValues] = useState(initialConfigState);
   const [savedConfigValues, setSavedConfigValues] = useState(initialConfigState);
@@ -429,6 +428,8 @@ function App() {
     let currentY = -100;
     let rafId = 0;
     let sidebarHovering = false;
+    const isCursorBlockedArea = (target) =>
+      target instanceof Element && Boolean(target.closest("[data-sidebar-cursor-block='true']"));
     const restoreMainCursor = () => {
       document.querySelector(".custom-cursor")?.classList.remove("custom-cursor--hidden");
     };
@@ -443,7 +444,7 @@ function App() {
 
     const onSidebarEnter = () => {
       sidebarHovering = true;
-      syncActive(true);
+      syncActive(false);
     };
 
     const onSidebarLeave = () => {
@@ -454,7 +455,11 @@ function App() {
     const onMouseMove = (event) => {
       targetX = event.clientX;
       targetY = event.clientY;
-      if (!sidebarHovering && active) syncActive(false);
+      if (!sidebarHovering) {
+        if (active) syncActive(false);
+        return;
+      }
+      syncActive(!isCursorBlockedArea(event.target));
     };
 
     const onWindowLeave = () => {
@@ -723,6 +728,70 @@ function App() {
   useEffect(() => {
     if (typeof window === "undefined") return undefined;
 
+    const interactiveSelector = '#stage-slideover-sidebar [data-sidebar-item="true"]';
+    const segmentSelector = "path, line, polyline, polygon, rect, circle, ellipse";
+    const cleanupTasks = [];
+
+    const measureSegmentLength = (segment) => {
+      let length = 0;
+
+      try {
+        if (typeof segment.getTotalLength === "function") {
+          length = segment.getTotalLength();
+        }
+      } catch {
+        length = 0;
+      }
+
+      if (!Number.isFinite(length) || length <= 0) {
+        try {
+          if (typeof segment.getBBox === "function") {
+            const box = segment.getBBox();
+            length = (box.width + box.height) * 2;
+          }
+        } catch {
+          length = 0;
+        }
+      }
+
+      if (!Number.isFinite(length) || length <= 0) return 72;
+      return Math.max(20, Math.ceil(length));
+    };
+
+    const hosts = Array.from(document.querySelectorAll(interactiveSelector));
+
+    hosts.forEach((host) => {
+      const icons = host.querySelectorAll(".lucide");
+      icons.forEach((icon) => {
+        const segments = Array.from(icon.querySelectorAll(segmentSelector));
+        if (!segments.length) return;
+
+        const duration = Math.min(2400, 1500 + segments.length * 72);
+        icon.style.setProperty("--icon-path-duration", `${duration}ms`);
+        cleanupTasks.push(() => {
+          icon.style.removeProperty("--icon-path-duration");
+        });
+
+        segments.forEach((segment, index) => {
+          const length = measureSegmentLength(segment);
+          segment.style.setProperty("--icon-path-length", `${length}`);
+          segment.style.setProperty("--icon-path-delay", `${index * 34}ms`);
+          cleanupTasks.push(() => {
+            segment.style.removeProperty("--icon-path-length");
+            segment.style.removeProperty("--icon-path-delay");
+          });
+        });
+      });
+    });
+
+    return () => {
+      cleanupTasks.forEach((task) => task());
+    };
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return undefined;
+
     const previousScrollRestoration = window.history.scrollRestoration;
     window.history.scrollRestoration = "manual";
     window.scrollTo({ top: 0, left: 0, behavior: "auto" });
@@ -754,17 +823,24 @@ function App() {
   }, []);
 
   useEffect(() => {
-    const syncTopbarTitle = () => {
-      const regions = Array.from(document.querySelectorAll("[data-region-title]"));
-      const threshold = 120;
-      let nextTitle = "DingTalk Dashboard";
-      let nextTone = "brand";
+    if (typeof window === "undefined") return undefined;
 
-      for (const region of regions) {
+    const regions = () => Array.from(document.querySelectorAll("[data-region-title]"));
+    let frameId = 0;
+
+    const syncTopbarMeta = () => {
+      const currentRegions = regions();
+      if (!currentRegions.length) return;
+
+      const threshold = 132;
+      let nextTitle = "监控总览与执行态势";
+      let nextTone = "overview";
+
+      for (const region of currentRegions) {
         const rect = region.getBoundingClientRect();
         if (rect.top <= threshold) {
-          nextTitle = region.getAttribute("data-region-title") || "DingTalk Dashboard";
-          nextTone = region.getAttribute("data-region-tone") || "brand";
+          nextTitle = region.getAttribute("data-region-title") || nextTitle;
+          nextTone = region.getAttribute("data-region-tone") || nextTone;
         }
       }
 
@@ -772,13 +848,22 @@ function App() {
       setTopbarTone((current) => (current === nextTone ? current : nextTone));
     };
 
-    syncTopbarTitle();
-    window.addEventListener("scroll", syncTopbarTitle, { passive: true });
-    window.addEventListener("resize", syncTopbarTitle);
+    const onScrollOrResize = () => {
+      if (frameId) return;
+      frameId = window.requestAnimationFrame(() => {
+        frameId = 0;
+        syncTopbarMeta();
+      });
+    };
+
+    syncTopbarMeta();
+    window.addEventListener("scroll", onScrollOrResize, { passive: true });
+    window.addEventListener("resize", onScrollOrResize);
 
     return () => {
-      window.removeEventListener("scroll", syncTopbarTitle);
-      window.removeEventListener("resize", syncTopbarTitle);
+      window.removeEventListener("scroll", onScrollOrResize);
+      window.removeEventListener("resize", onScrollOrResize);
+      if (frameId) window.cancelAnimationFrame(frameId);
     };
   }, []);
 
@@ -899,7 +984,17 @@ function App() {
   };
 
   return (
-    <div className="unified-icon-scale min-h-screen bg-background text-foreground">
+    <div
+      className="unified-icon-scale min-h-screen bg-background text-foreground"
+      style={{
+        "--sidebar-expanded-width": "280px",
+        "--sidebar-inner-size": "40px",
+        "--sidebar-rail-padding": "1rem",
+        "--sidebar-border-width": "1px",
+        "--sidebar-collapsed-width":
+          "calc(var(--sidebar-inner-size) + (var(--sidebar-rail-padding) * 2) + var(--sidebar-border-width))",
+      }}
+    >
       <div className="surface-grid pointer-events-none fixed inset-0 opacity-60 dark:opacity-40" />
 
       <div
@@ -911,15 +1006,17 @@ function App() {
         onClick={() => setMobileNavOpen(false)}
       />
 
-      <div
-        className={cn(
-          "mx-auto min-h-screen max-w-[1600px] lg:grid",
-          sidebarCollapsed ? "lg:grid-cols-[92px_minmax(0,1fr)]" : "lg:grid-cols-[280px_minmax(0,1fr)]",
+        <div
+          className={cn(
+          "mx-auto min-h-screen max-w-[1600px] transition-none lg:grid lg:transition-[grid-template-columns] lg:duration-500 lg:ease-[cubic-bezier(0.22,1,0.36,1)]",
+          sidebarCollapsed
+            ? "lg:grid-cols-[var(--sidebar-collapsed-width)_minmax(0,1fr)]"
+            : "lg:grid-cols-[var(--sidebar-expanded-width)_minmax(0,1fr)]",
         )}
       >
         <header className="sticky top-0 z-20 flex items-center justify-between border-b bg-background/90 px-4 py-4 backdrop-blur lg:hidden">
           <div className="min-w-0">
-            <p className="text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground">
+            <p className="text-xs font-medium uppercase tracking-[0.14em] text-muted-foreground">
               Console
             </p>
             <h1 className="truncate text-sm font-semibold">自动打卡控制台</h1>
@@ -934,10 +1031,10 @@ function App() {
         <aside
           id="stage-slideover-sidebar"
           className={cn(
-            "group/sidebar-rail sidebar-scrollbar fixed inset-y-0 left-0 z-40 flex w-[280px] flex-col overflow-y-auto border-r bg-background/95 p-4 backdrop-blur transition-[width,padding,transform] duration-500 ease-[cubic-bezier(0.22,1,0.36,1)] lg:sticky lg:top-0 lg:h-screen lg:translate-x-0 lg:p-4",
+            "group/sidebar-rail sidebar-scrollbar fixed inset-y-0 left-0 z-40 flex w-[var(--sidebar-expanded-width)] origin-left flex-col overflow-y-auto border-r bg-background/95 p-4 backdrop-blur transition-[width,padding,transform] duration-500 ease-[cubic-bezier(0.22,1,0.36,1)] lg:sticky lg:top-0 lg:h-screen lg:translate-x-0 lg:p-4",
             sidebarCollapsed
-              ? "lg:w-[88px] lg:cursor-e-resize rtl:lg:cursor-w-resize"
-              : "lg:w-[280px]",
+              ? "lg:w-[var(--sidebar-collapsed-width)] lg:cursor-e-resize rtl:lg:cursor-w-resize"
+              : "lg:w-[var(--sidebar-expanded-width)]",
             mobileNavOpen ? "translate-x-0" : "-translate-x-full",
           )}
           onClick={(event) => {
@@ -950,12 +1047,12 @@ function App() {
           <div className="space-y-6">
             <LogoRegion collapsed={sidebarCollapsed} onToggleCollapse={() => setSidebarCollapsed((value) => !value)} />
             <SidebarNav collapsed={sidebarCollapsed} activeSection={activeSection} onNavClick={handleNavClick} />
-            <SidebarSummaryCard collapsed={sidebarCollapsed} scheduleSummary={scheduleSummary} />
+            {/* <SidebarSummaryCard collapsed={sidebarCollapsed} scheduleSummary={scheduleSummary} /> */}
           </div>
 
           <div className="mt-auto space-y-4 pt-6">
             <div
-              className={cn("fade-up space-y-2 text-sm leading-5 text-muted-foreground", sidebarCollapsed && "lg:hidden")}
+              className={cn("fade-up space-y-2 text-sm leading-6 text-muted-foreground", sidebarCollapsed && "lg:hidden")}
               style={{ "--delay": "260ms" }}
             >
               <p>版本 v0.4.0</p>
@@ -964,112 +1061,107 @@ function App() {
           </div>
         </aside>
 
-        <main className="min-w-0 px-4 pb-28 pt-4 sm:px-6 lg:px-6 lg:pt-4 lg:pb-6">
+        <main className="min-w-0 px-3 pb-28 pt-3 sm:px-4 lg:px-4 lg:pt-3 lg:pb-6">
           <TopbarRegion
             title={topbarTitle}
             tone={topbarTone}
             theme={theme}
-            pendingAction={pendingAction}
-            hasBlockingIssues={hasBlockingIssues}
-            onAction={handleAction}
+            sidebarCollapsed={sidebarCollapsed}
             onToggleTheme={() => setTheme((value) => (value === "light" ? "dark" : "light"))}
           />
 
-          <section className="content-region mt-6 space-y-6 xl:space-y-6">
+          <section className="content-region mt-0 space-y-12 xl:space-y-14">
             <RegionSection
               title="监控总览与执行态势"
               description="用于查看系统状态、关键指标和执行判断。"
             >
-              <section id="overview" className="fade-up scroll-mt-28" style={{ "--delay": "60ms" }}>
-                <Card className="overflow-hidden">
-                  <CardContent className="space-y-6 pt-6">
-                    {hasBlockingIssues ? (
-                      <Card className="border-red-200 bg-red-50/80 dark:border-red-900/40 dark:bg-red-950/20">
-                        <CardHeader className="pb-4">
-                          <div className="flex flex-wrap items-center gap-2">
-                            <Badge variant="destructive">阻断项 {validationIssues.length}</Badge>
-                            <CardTitle className="text-sm">保存与启动前需要先修复以下问题</CardTitle>
-                          </div>
-                        </CardHeader>
-                        <CardContent className="space-y-2">
-                          {validationIssues.map((issue) => (
-                            <div key={issue.key} className="flex items-start gap-2 text-sm text-foreground">
-                              <TriangleAlert className="mt-0.5 size-4 text-red-500" />
-                              <span>{issue.message}</span>
+              <div className="dashboard-layout">
+                <section id="overview" className="dashboard-block dashboard-block--wide fade-up scroll-mt-28" style={{ "--delay": "60ms" }}>
+                  <Card className="region-card h-full overflow-hidden">
+                    <CardContent className="region-card-content space-y-5 p-5 pt-5">
+                      {hasBlockingIssues ? (
+                        <Card className="border-red-200 bg-red-50/80 dark:border-red-900/40 dark:bg-red-950/20">
+                          <CardHeader className="pb-4">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <Badge variant="destructive">阻断项 {validationIssues.length}</Badge>
+                              <CardTitle>保存与启动前需要先修复以下问题</CardTitle>
                             </div>
-                          ))}
-                        </CardContent>
-                      </Card>
-                    ) : null}
+                          </CardHeader>
+                          <CardContent className="space-y-2">
+                            {validationIssues.map((issue) => (
+                              <div key={issue.key} className="flex items-start gap-2 text-sm text-foreground">
+                                <TriangleAlert className="mt-0.5 size-4 text-red-500" />
+                                <span>{issue.message}</span>
+                              </div>
+                            ))}
+                          </CardContent>
+                        </Card>
+                      ) : null}
 
-                    <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-                      {metrics.map((item, index) => (
-                        <MetricCard key={item.label} item={item} delay={`${120 + index * 60}ms`} />
-                      ))}
-                    </div>
+                      <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-4">
+                        {metrics.map((item, index) => (
+                          <MetricCard key={item.label} item={item} delay={`${120 + index * 60}ms`} />
+                        ))}
+                      </div>
 
-                    <div className="grid gap-4 xl:grid-cols-[1.2fr_0.8fr]">
-                      <Card className="bg-muted/20">
-                        <CardHeader className="pb-4">
-                          <CardTitle className="text-base">现在最该看的信息</CardTitle>
-                          <CardDescription>只保留当前决策必需的信息。</CardDescription>
-                        </CardHeader>
-                        <CardContent className="space-y-4">
-                          {priorities.map((item) => (
-                            <DecisionRow key={item.title} item={item} />
-                          ))}
-                        </CardContent>
-                      </Card>
+                      <div className="grid gap-5 lg:grid-cols-2">
+                        <Card className="bg-muted/20">
+                          <CardHeader className="pb-4">
+                            <CardTitle>现在最该看的信息</CardTitle>
+                            <CardDescription>只保留当前决策必需的信息。</CardDescription>
+                          </CardHeader>
+                          <CardContent className="space-y-4">
+                            {priorities.map((item) => (
+                              <DecisionRow key={item.title} item={item} />
+                            ))}
+                          </CardContent>
+                        </Card>
 
-                      <Card className="bg-muted/20">
-                        <CardHeader className="pb-4">
-                          <CardTitle className="text-base">推荐操作路径</CardTitle>
-                          <CardDescription>按顺序处理更稳妥。</CardDescription>
-                        </CardHeader>
-                        <CardContent className="space-y-4">
-                          {quickChecklist.map((item, index) => (
-                            <div key={item} className="flex items-start gap-2 rounded-lg border bg-background px-4 py-4 text-sm">
-                              <Badge variant="outline" className="mt-0.5 rounded-md">
-                                {index + 1}
-                              </Badge>
-                              <p className="leading-5 text-muted-foreground">{item}</p>
-                            </div>
-                          ))}
-                        </CardContent>
-                      </Card>
-                    </div>
-                  </CardContent>
-                </Card>
-              </section>
+                        <Card className="bg-muted/20">
+                          <CardHeader className="pb-4">
+                            <CardTitle>推荐操作路径</CardTitle>
+                            <CardDescription>按顺序处理更稳妥。</CardDescription>
+                          </CardHeader>
+                          <CardContent className="space-y-4">
+                            {quickChecklist.map((item, index) => (
+                              <div key={item} className="flex items-start gap-2 rounded-lg border bg-background px-4 py-4 text-sm">
+                                <Badge variant="outline" className="mt-0.5 rounded-md">
+                                  {index + 1}
+                                </Badge>
+                                <p className="leading-6 text-muted-foreground">{item}</p>
+                              </div>
+                            ))}
+                          </CardContent>
+                        </Card>
+                      </div>
+                    </CardContent>
+                  </Card>
+                </section>
 
-              <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_380px]">
-                <div />
-                <div className="space-y-6">
-                  <section className="fade-up" style={{ "--delay": "180ms" }}>
-                    <Card>
-                      <CardHeader className="flex flex-col gap-4 border-b sm:flex-row sm:items-center sm:justify-between">
-                        <div className="space-y-2">
-                          <CardTitle>运行状态</CardTitle>
-                          <CardDescription>先判断当前能不能执行。</CardDescription>
-                        </div>
-                      </CardHeader>
-                      <CardContent className="space-y-4 pt-6">
-                        <div className="flex flex-wrap gap-2">
-                          {statusTags.map((item) => (
-                            <Badge key={item} variant={statusTone(item)} className="rounded-md">
-                              {item}
-                            </Badge>
-                          ))}
-                        </div>
-                        <div className="space-y-4">
-                          {statusRows.map(([label, value, emphasized]) => (
-                            <SummaryRow key={label} label={label} value={value} emphasized={emphasized} />
-                          ))}
-                        </div>
-                      </CardContent>
-                    </Card>
-                  </section>
-                </div>
+                <section className="dashboard-block fade-up" style={{ "--delay": "180ms" }}>
+                  <Card className="region-card h-full">
+                    <CardHeader className="flex flex-col gap-4 border-b sm:flex-row sm:items-center sm:justify-between">
+                      <div className="space-y-2">
+                        <CardTitle>运行状态</CardTitle>
+                        <CardDescription>先判断当前能不能执行。</CardDescription>
+                      </div>
+                    </CardHeader>
+                    <CardContent className="region-card-content space-y-5 pt-5">
+                      <div className="flex flex-wrap gap-2">
+                        {statusTags.map((item) => (
+                          <Badge key={item} variant={statusTone(item)} className="rounded-md">
+                            {item}
+                          </Badge>
+                        ))}
+                      </div>
+                      <div className="space-y-4">
+                        {statusRows.map(([label, value, emphasized]) => (
+                          <SummaryRow key={label} label={label} value={value} emphasized={emphasized} />
+                        ))}
+                      </div>
+                    </CardContent>
+                  </Card>
+                </section>
               </div>
             </RegionSection>
 
@@ -1077,16 +1169,16 @@ function App() {
               title="任务配置与排期管理"
               description="集中管理动作、排期和关键参数。"
             >
-              <div className="space-y-6">
-                <section id="actions" className="fade-up scroll-mt-28" style={{ "--delay": "160ms" }}>
-                  <Card>
+              <div className="dashboard-layout">
+                <section id="actions" className="dashboard-block fade-up scroll-mt-28" style={{ "--delay": "160ms" }}>
+                  <Card className="region-card h-full">
                     <CardHeader className="flex flex-col gap-4 border-b sm:flex-row sm:items-center sm:justify-between">
                       <div className="space-y-2">
                         <CardTitle>快捷动作</CardTitle>
                         <CardDescription>优先处理高频动作。</CardDescription>
                       </div>
                     </CardHeader>
-                    <CardContent className="space-y-4 pt-6">
+                    <CardContent className="region-card-content space-y-5 pt-5">
                       <div className="flex flex-wrap gap-2">
                         {actions.map((item, index) => (
                           <ActionButton
@@ -1110,16 +1202,16 @@ function App() {
                   </Card>
                 </section>
 
-                <section id="windows" className="fade-up scroll-mt-28" style={{ "--delay": "220ms" }}>
-                  <Card>
+                <section id="windows" className="dashboard-block fade-up scroll-mt-28" style={{ "--delay": "220ms" }}>
+                  <Card className="region-card h-full">
                     <CardHeader className="flex flex-col gap-4 border-b sm:flex-row sm:items-center sm:justify-between">
                       <div className="space-y-2">
                         <CardTitle>排期设置</CardTitle>
                         <CardDescription>看时间、改时间、重抽时间。</CardDescription>
                       </div>
                     </CardHeader>
-                    <CardContent className="space-y-4 pt-6">
-                      <div className="grid gap-2 lg:grid-cols-3">
+                    <CardContent className="region-card-content space-y-5 pt-5">
+                      <div className="grid gap-3 sm:grid-cols-2">
                         <MiniPanel title="今日下一次计划" value={scheduleSummary} detail="默认按时间窗口抽取，也支持手动精确指定到秒。" />
                         <MiniPanel title="最近完成日期" value="2026-04-09" detail="两个窗口都已正常落库。" />
                         <div className="rounded-xl border bg-muted/30 p-4">
@@ -1139,7 +1231,7 @@ function App() {
                         </div>
                       </div>
 
-                      <div className="grid gap-4 lg:grid-cols-2">
+                      <div className="grid gap-5">
                         {windowsData.map((item, index) => (
                           <Card
                             key={item.title}
@@ -1175,8 +1267,8 @@ function App() {
                               <div className="rounded-xl border bg-background p-4">
                                 <div className="flex items-start justify-between gap-2">
                                   <div className="flex flex-col gap-2">
-                                    <p className="text-sm font-semibold text-foreground">手动指定下一次执行</p>
-                                    <p className="text-xs leading-5 text-muted-foreground">
+                                    <p className="text-sm font-medium text-foreground">手动指定下一次执行</p>
+                                    <p className="text-xs leading-6 text-muted-foreground">
                                       使用 Time Picker 精确到秒。保存配置后会覆盖当前下一次执行时间。
                                     </p>
                                   </div>
@@ -1204,16 +1296,16 @@ function App() {
                   </Card>
                 </section>
 
-                <section id="config" className="fade-up scroll-mt-28" style={{ "--delay": "280ms" }}>
-                  <Card>
+                <section id="config" className="dashboard-block fade-up scroll-mt-28" style={{ "--delay": "280ms" }}>
+                  <Card className="region-card h-full">
                     <CardHeader className="flex flex-col gap-4 border-b sm:flex-row sm:items-center sm:justify-between">
                       <div className="space-y-2">
                         <CardTitle>基础参数</CardTitle>
                         <CardDescription>低频参数集中放在这里。</CardDescription>
                       </div>
                     </CardHeader>
-                    <CardContent className="space-y-4 pt-6">
-                      <div className="grid gap-4 lg:grid-cols-2">
+                    <CardContent className="region-card-content space-y-5 pt-5">
+                      <div className="grid gap-4 2xl:grid-cols-2">
                         {configGroups.map((group) => (
                           <Card key={group.title} className="bg-muted/20">
                             <CardHeader>
@@ -1254,142 +1346,113 @@ function App() {
               title="告警日志与通知中心"
               description="统一查看提醒、告警和执行日志。"
             >
-              <div className="grid gap-6 xl:grid-cols-[380px_minmax(0,1fr)]">
-                <div className="space-y-6">
-                  <section className="fade-up" style={{ "--delay": "220ms" }}>
-                    <Card>
-                      <CardHeader className="flex flex-col gap-4 border-b sm:flex-row sm:items-center sm:justify-between">
-                        <div className="space-y-2">
-                          <CardTitle>提醒</CardTitle>
-                          <CardDescription>先处理风险项。</CardDescription>
-                        </div>
-                      </CardHeader>
-                      <CardContent className="space-y-4 pt-6">
-                        <AlertRow
-                          icon={TriangleAlert}
-                          title="工作日接口依赖在线"
-                          detail="如果接口连续超时，建议临时关闭工作日校验，并在保存后执行自检。"
-                        />
-                        <AlertRow
-                          icon={BellRing}
-                          title="关键配置修改需二次确认"
-                          detail="serial、package、state_file 变更会影响执行链路，建议在保存前复核。"
-                        />
-                        <AlertRow
-                          icon={ListChecks}
-                          title="建议先做自检再试运行"
-                          detail="先检查设备状态和权限，再触发单次动作，能减少误报。"
-                        />
-                      </CardContent>
-                    </Card>
-                  </section>
+              <div className="dashboard-layout">
+                <section className="dashboard-block fade-up" style={{ "--delay": "220ms" }}>
+                  <Card className="region-card h-full">
+                    <CardHeader className="flex flex-col gap-4 border-b sm:flex-row sm:items-center sm:justify-between">
+                      <div className="space-y-2">
+                        <CardTitle>提醒</CardTitle>
+                        <CardDescription>先处理风险项。</CardDescription>
+                      </div>
+                    </CardHeader>
+                    <CardContent className="region-card-content space-y-5 pt-5">
+                      <AlertRow
+                        icon={TriangleAlert}
+                        title="工作日接口依赖在线"
+                        detail="如果接口连续超时，建议临时关闭工作日校验，并在保存后执行自检。"
+                      />
+                      <AlertRow
+                        icon={BellRing}
+                        title="关键配置修改需二次确认"
+                        detail="serial、package、state_file 变更会影响执行链路，建议在保存前复核。"
+                      />
+                      <AlertRow
+                        icon={ListChecks}
+                        title="建议先做自检再试运行"
+                        detail="先检查设备状态和权限，再触发单次动作，能减少误报。"
+                      />
+                    </CardContent>
+                  </Card>
+                </section>
 
-                </div>
-
-                <div className="space-y-6">
-                  <section id="logs" className="fade-up scroll-mt-28" style={{ "--delay": "260ms" }}>
-                    <Card>
-                      <CardHeader>
-                        <CardTitle>日志</CardTitle>
-                        <CardDescription>只看最近动作和结果。</CardDescription>
-                      </CardHeader>
-                      <CardContent className="space-y-4">
-                        {logs.map((log) => (
-                          <Card key={`${log.time}-${log.title}`} className="card-hover bg-muted/20">
-                            <CardContent className="grid gap-2 p-4 sm:grid-cols-[auto_1fr_auto] sm:items-center">
-                              <Badge variant="outline" className="rounded-md">
-                                {log.time}
-                              </Badge>
-                              <div className="space-y-2">
-                                <p className="text-sm font-semibold">{log.title}</p>
-                                <p className="text-sm leading-6 text-muted-foreground">{log.detail}</p>
-                              </div>
-                              <Badge variant={statusTone(log.status)} className="rounded-md">
-                                {log.status}
-                              </Badge>
-                            </CardContent>
-                          </Card>
-                        ))}
-                      </CardContent>
-                    </Card>
-                  </section>
-
-                  <section className="fade-up" style={{ "--delay": "300ms" }}>
-                    <Card>
-                      <CardHeader>
-                        <CardTitle>时间线</CardTitle>
-                        <CardDescription>快速回看今天发生了什么。</CardDescription>
-                      </CardHeader>
-                      <CardContent className="space-y-4">
-                        {timeline.map((item, index) => (
-                          <div key={item}>
-                            <div className="flex items-start gap-2 text-sm">
-                              <Badge variant="outline" className="rounded-md">
-                                {index + 1}
-                              </Badge>
-                              <p className={cn("leading-6 text-muted-foreground", index === 1 && "font-medium text-foreground")}>
-                                {item}
-                              </p>
+                <section id="logs" className="dashboard-block dashboard-block--wide fade-up scroll-mt-28" style={{ "--delay": "260ms" }}>
+                  <Card className="region-card h-full">
+                    <CardHeader>
+                      <CardTitle>日志</CardTitle>
+                      <CardDescription>只看最近动作和结果。</CardDescription>
+                    </CardHeader>
+                    <CardContent className="region-card-content space-y-5">
+                      {logs.map((log) => (
+                        <Card key={`${log.time}-${log.title}`} className="card-hover bg-muted/20">
+                          <CardContent className="grid gap-2 p-4 sm:grid-cols-[auto_1fr_auto] sm:items-center">
+                            <Badge variant="outline" className="rounded-md">
+                              {log.time}
+                            </Badge>
+                            <div className="space-y-2">
+                              <p className="text-sm font-medium">{log.title}</p>
+                              <p className="text-sm leading-6 text-muted-foreground">{log.detail}</p>
                             </div>
-                            {index < timeline.length - 1 ? <Separator className="mt-4" /> : null}
-                          </div>
-                        ))}
-                      </CardContent>
-                    </Card>
-                  </section>
+                            <Badge variant={statusTone(log.status)} className="rounded-md">
+                              {log.status}
+                            </Badge>
+                          </CardContent>
+                        </Card>
+                      ))}
+                    </CardContent>
+                  </Card>
+                </section>
 
-                  <section id="guards" className="fade-up scroll-mt-28" style={{ "--delay": "340ms" }}>
-                    <Card>
-                      <CardHeader>
-                        <CardTitle>保护规则</CardTitle>
-                        <CardDescription>保存前再看这一组。</CardDescription>
-                      </CardHeader>
-                      <CardContent className="space-y-4">
-                        {guards.map(([label, value, emphasized], index) => (
-                          <div key={label} className="space-y-4">
-                            <SummaryRow label={label} value={value} emphasized={emphasized} />
-                            {index < guards.length - 1 ? <Separator /> : null}
+                <section className="dashboard-block fade-up" style={{ "--delay": "300ms" }}>
+                  <Card className="region-card h-full">
+                    <CardHeader>
+                      <CardTitle>时间线</CardTitle>
+                      <CardDescription>快速回看今天发生了什么。</CardDescription>
+                    </CardHeader>
+                    <CardContent className="region-card-content space-y-5">
+                      {timeline.map((item, index) => (
+                        <div key={item}>
+                          <div className="flex items-start gap-2 text-sm">
+                            <Badge variant="outline" className="rounded-md">
+                              {index + 1}
+                            </Badge>
+                            <p className={cn("leading-6 text-muted-foreground", index === 1 && "font-medium text-foreground")}>
+                              {item}
+                            </p>
                           </div>
-                        ))}
-                      </CardContent>
-                    </Card>
-                  </section>
-                </div>
+                          {index < timeline.length - 1 ? <Separator className="mt-4" /> : null}
+                        </div>
+                      ))}
+                    </CardContent>
+                  </Card>
+                </section>
+
+                <section id="guards" className="dashboard-block fade-up scroll-mt-28" style={{ "--delay": "340ms" }}>
+                  <Card className="region-card h-full">
+                    <CardHeader>
+                      <CardTitle>保护规则</CardTitle>
+                      <CardDescription>保存前再看这一组。</CardDescription>
+                    </CardHeader>
+                    <CardContent className="region-card-content space-y-5">
+                      {guards.map(([label, value, emphasized], index) => (
+                        <div key={label} className="space-y-4">
+                          <SummaryRow label={label} value={value} emphasized={emphasized} />
+                          {index < guards.length - 1 ? <Separator /> : null}
+                        </div>
+                      ))}
+                    </CardContent>
+                  </Card>
+                </section>
               </div>
             </RegionSection>
           </section>
         </main>
 
-        <div className="fixed inset-x-0 bottom-0 z-20 grid grid-cols-3 gap-2 border-t bg-background/95 px-4 py-4 backdrop-blur lg:hidden">
-          <ActionButton
-            variant="ghost"
-            icon={Stethoscope}
-            className="w-full"
-            isPending={pendingAction === "自检"}
-            onClick={() => handleAction("自检")}
-          >
-            自检
-          </ActionButton>
-          <ActionButton
-            variant="secondary"
-            icon={RefreshCw}
-            className="w-full"
-            isPending={pendingAction === "刷新设备状态"}
-            onClick={() => handleAction("刷新设备状态")}
-          >
-            刷新
-          </ActionButton>
-          <ActionButton
-            variant="default"
-            icon={Play}
-            className="w-full"
-            isPending={pendingAction === "启动任务"}
-            disabled={hasBlockingIssues}
-            onClick={() => handleAction("启动任务")}
-          >
-            启动
-          </ActionButton>
-        </div>
+        <BottomStickyMenu
+          activeSection={activeSection}
+          pendingAction={pendingAction}
+          hasBlockingIssues={hasBlockingIssues}
+          onAction={handleAction}
+        />
       </div>
     </div>
   );
@@ -1398,7 +1461,7 @@ function App() {
 function ActionButton({ icon: Icon, children, isPending = false, className, size, ...props }) {
   return (
     <Button size={size} className={cn("gap-2", className)} {...props}>
-      <Icon className={cn(isPending && "animate-spin")} />
+      <Icon />
       <span>{isPending ? "处理中" : children}</span>
     </Button>
   );
@@ -1406,14 +1469,14 @@ function ActionButton({ icon: Icon, children, isPending = false, className, size
 
 function LogoRegion({ collapsed, onToggleCollapse }) {
   return (
-    <div className="fade-up" style={{ "--delay": "40ms" }}>
+    <div className="fade-up" style={{ "--delay": "40ms" }} data-sidebar-cursor-block="true">
       <div
         className={cn(
           "flex h-12 items-center rounded-lg bg-background/70 backdrop-blur",
           collapsed ? "justify-center px-0" : "justify-between px-0",
         )}
       >
-        <div className="flex size-10 shrink-0 items-center justify-center rounded-md bg-black text-white dark:bg-white dark:text-black">
+        <div className="flex size-[var(--sidebar-inner-size)] shrink-0 items-center justify-center rounded-md bg-black text-white dark:bg-white dark:text-black">
           <Bot className="size-5" />
         </div>
 
@@ -1455,11 +1518,12 @@ function SidebarNav({ collapsed, activeSection, onNavClick }) {
             key={item.id}
             href={`#${item.id}`}
             data-sidebar-item="true"
+            data-sidebar-cursor-block="true"
             title={item.label}
             aria-label={item.label}
             className={cn(
-              "flex h-10 w-full items-center gap-2 overflow-hidden rounded-md border px-2 text-sm leading-5 transition-[width,padding,gap,background-color,color,border-color] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]",
-              collapsed && "lg:h-10 lg:w-10 lg:justify-center lg:px-0 lg:gap-0",
+              "flex h-10 w-full items-center gap-2 overflow-hidden rounded-md border px-2 text-sm leading-6 transition-[width,padding,gap,background-color,color,border-color] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]",
+              collapsed && "lg:h-10 lg:w-[var(--sidebar-inner-size)] lg:justify-center lg:px-0 lg:gap-0",
               activeSection === item.id
                 ? "border-border bg-accent text-accent-foreground"
                 : "border-transparent text-muted-foreground hover:border-border hover:bg-accent hover:text-accent-foreground",
@@ -1488,7 +1552,7 @@ function SidebarSummaryCard({ collapsed, scheduleSummary }) {
   return (
     <Card className={cn("fade-up", collapsed && "lg:hidden")} style={{ "--delay": "160ms" }}>
       <CardHeader className="pb-4">
-        <CardTitle className="text-sm">今日概览</CardTitle>
+        <CardTitle>今日概览</CardTitle>
         <CardDescription>优先看状态和执行窗口</CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
@@ -1511,21 +1575,19 @@ function RegionSection({ title, description, children }) {
           : "brand";
 
   return (
-    <section className="space-y-6" data-region-title={title} data-region-tone={tone}>
-      <div className="flex items-end justify-between gap-4 border-b pb-4">
-        <div className="flex min-w-0 flex-col gap-2">
-          <h3 className="text-lg font-semibold tracking-tight">{title}</h3>
-          <p className="max-w-3xl text-sm leading-6 text-muted-foreground">{description}</p>
-        </div>
-        <div className="hidden h-px min-w-16 flex-1 bg-border xl:block" aria-hidden="true" />
-      </div>
+    <section className="space-y-6" data-region-title={title} data-region-tone={tone} aria-label={description}>
       {children}
     </section>
   );
 }
 
-function TopbarRegion({ title, tone, theme, pendingAction, hasBlockingIssues, onAction, onToggleTheme }) {
+function TopbarRegion({ title, tone, theme, sidebarCollapsed, onToggleTheme }) {
   const titleRef = useRef(null);
+  const topbarRef = useRef(null);
+  const sidebarCollapsedRef = useRef(sidebarCollapsed);
+  const sidebarWidthsRef = useRef({ expanded: 280, collapsed: 73 });
+  const insetToRef = useRef(null);
+  const sidebarWidthToRef = useRef(null);
 
   useLayoutEffect(() => {
     const target = titleRef.current;
@@ -1541,14 +1603,14 @@ function TopbarRegion({ title, tone, theme, pendingAction, hasBlockingIssues, on
 
     const tween = gsap.fromTo(
       split.chars,
-      { yPercent: 120, opacity: 0, rotateX: -45 },
+      { yPercent: 108, opacity: 0, rotateX: -32 },
       {
         yPercent: 0,
         opacity: 1,
         rotateX: 0,
-        duration: 0.44,
-        ease: "power3.out",
-        stagger: 0.018,
+        duration: 0.56,
+        ease: "power2.out",
+        stagger: 0.022,
         clearProps: "transform,opacity",
       },
     );
@@ -1559,61 +1621,233 @@ function TopbarRegion({ title, tone, theme, pendingAction, hasBlockingIssues, on
     };
   }, [title]);
 
-  return (
-    <section className="topbar-region sticky top-4 z-10">
-      <div className="toolbar-surface flex min-h-16 flex-col gap-2 px-4 py-4 xl:h-16 xl:min-h-0 xl:flex-row xl:items-center xl:justify-between xl:gap-4 xl:py-0">
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
-            <span
-              key={`${title}-indicator`}
-              className={cn("title-swap topbar-indicator", `topbar-indicator--${tone}`)}
-              aria-hidden="true"
-            />
-            <h2 className="truncate text-base font-semibold tracking-tight">
-              <span key={title} ref={titleRef} className="topbar-title block">
-                {title}
-              </span>
-            </h2>
-          </div>
-        </div>
+  useEffect(() => {
+    if (typeof window === "undefined") return undefined;
+    const topbar = topbarRef.current;
+    if (!topbar) return undefined;
 
-        <div className="flex flex-wrap items-center gap-2">
-          <ActionButton
-            variant="default"
-            icon={Cog}
-            size="sm"
-            isPending={pendingAction === "保存配置"}
-            disabled={hasBlockingIssues}
-            onClick={() => onAction("保存配置")}
+    let scrollFrameId = 0;
+    const maxInset = 16;
+    const startY = 14;
+    const endY = 280;
+    const easeOutCubic = (value) => 1 - (1 - value) ** 3;
+    const parseSize = (raw, fallback) => {
+      const value = Number.parseFloat(raw);
+      return Number.isFinite(value) ? value : fallback;
+    };
+    const resolveVarPx = (varName, fallback) => {
+      const probe = document.createElement("div");
+      probe.style.position = "absolute";
+      probe.style.visibility = "hidden";
+      probe.style.pointerEvents = "none";
+      probe.style.width = `var(${varName})`;
+      topbar.appendChild(probe);
+      const px = Number.parseFloat(window.getComputedStyle(probe).width);
+      topbar.removeChild(probe);
+      return Number.isFinite(px) ? px : fallback;
+    };
+
+    const readSidebarWidths = () => {
+      const styles = window.getComputedStyle(topbar);
+      sidebarWidthsRef.current = {
+        expanded: parseSize(styles.getPropertyValue("--sidebar-expanded-width"), 280),
+        collapsed: resolveVarPx("--sidebar-collapsed-width", 73),
+      };
+    };
+
+    const updateInsetTarget = () => {
+      const y = window.scrollY;
+      const progress = Math.min(1, Math.max(0, (y - startY) / (endY - startY)));
+      const targetInset = maxInset * easeOutCubic(progress);
+      insetToRef.current?.(targetInset);
+    };
+
+    const updateSidebarTarget = () => {
+      const widths = sidebarWidthsRef.current;
+      const nextWidth = sidebarCollapsedRef.current ? widths.collapsed : widths.expanded;
+      sidebarWidthToRef.current?.(nextWidth);
+    };
+
+    const onScroll = () => {
+      if (scrollFrameId) return;
+      scrollFrameId = window.requestAnimationFrame(() => {
+        scrollFrameId = 0;
+        updateInsetTarget();
+      });
+    };
+
+    const onResize = () => {
+      readSidebarWidths();
+      updateSidebarTarget();
+      onScroll();
+    };
+
+    readSidebarWidths();
+    const widths = sidebarWidthsRef.current;
+    const initialSidebarWidth = sidebarCollapsedRef.current ? widths.collapsed : widths.expanded;
+    gsap.set(topbar, {
+      "--topbar-inline-inset": "0px",
+      "--topbar-sidebar-animated-width": `${initialSidebarWidth}px`,
+    });
+
+    insetToRef.current = gsap.quickTo(topbar, "--topbar-inline-inset", {
+      duration: 0.46,
+      ease: "power3.out",
+      overwrite: "auto",
+    });
+    sidebarWidthToRef.current = gsap.quickTo(topbar, "--topbar-sidebar-animated-width", {
+      duration: 0.56,
+      ease: "power3.out",
+      overwrite: "auto",
+    });
+
+    updateInsetTarget();
+
+    window.addEventListener("scroll", onScroll, { passive: true });
+    window.addEventListener("resize", onResize);
+
+    return () => {
+      window.removeEventListener("scroll", onScroll);
+      window.removeEventListener("resize", onResize);
+      if (scrollFrameId) window.cancelAnimationFrame(scrollFrameId);
+      insetToRef.current?.tween?.kill();
+      sidebarWidthToRef.current?.tween?.kill();
+      insetToRef.current = null;
+      sidebarWidthToRef.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
+    sidebarCollapsedRef.current = sidebarCollapsed;
+    const widths = sidebarWidthsRef.current;
+    const nextWidth = sidebarCollapsed ? widths.collapsed : widths.expanded;
+    sidebarWidthToRef.current?.(nextWidth);
+  }, [sidebarCollapsed]);
+
+  return (
+    <>
+      <div className="hidden h-[3.75rem] lg:block" aria-hidden="true" />
+      <section
+        ref={topbarRef}
+        className="topbar-region topbar-region--fixed sticky top-0 z-[30] -mx-3 bg-background/70 px-3 py-1 backdrop-blur sm:-mx-4 sm:px-4 lg:mx-0 lg:px-4"
+        style={{
+          "--topbar-sidebar-animated-width": sidebarCollapsed
+            ? "var(--sidebar-collapsed-width)"
+            : "var(--sidebar-expanded-width)",
+          "--topbar-inline-inset": "0px",
+        }}
+      >
+        <div className="topbar-region-inner flex h-12 items-center">
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-2">
+              <span
+                key={`${title}-indicator`}
+                className={cn("title-swap topbar-indicator", `topbar-indicator--${tone}`)}
+                aria-hidden="true"
+              />
+              <h2 className="truncate text-base font-semibold tracking-tight">
+                <span key={title} ref={titleRef} className="topbar-title block">
+                  {title}
+                </span>
+              </h2>
+            </div>
+          </div>
+          <button
+            type="button"
+            className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+            onClick={onToggleTheme}
           >
-            保存配置
-          </ActionButton>
-          <ActionButton
-            variant="secondary"
-            icon={Play}
-            size="sm"
-            isPending={pendingAction === "启动任务"}
-            disabled={hasBlockingIssues}
-            onClick={() => onAction("启动任务")}
-          >
-            启动任务
-          </ActionButton>
-          <ActionButton
-            variant="ghost"
-            icon={Stethoscope}
-            size="sm"
-            isPending={pendingAction === "自检"}
-            onClick={() => onAction("自检")}
-          >
-            自检
-          </ActionButton>
-          <Button variant="outline" size="sm" className="gap-2" onClick={onToggleTheme}>
-            {theme === "light" ? <MoonStar /> : <SunMedium />}
+            {theme === "light" ? <MoonStar className="size-4" aria-hidden="true" /> : <SunMedium className="size-4" aria-hidden="true" />}
             <span>{theme === "light" ? "深色模式" : "浅色模式"}</span>
-          </Button>
+          </button>
         </div>
+      </section>
+    </>
+  );
+}
+
+function BottomStickyMenu({ activeSection, pendingAction, hasBlockingIssues, onAction }) {
+  const [visible, setVisible] = useState(true);
+  const lastScrollYRef = useRef(0);
+  const travelRef = useRef(0);
+  const alwaysVisible = activeSection === "actions";
+
+  useEffect(() => {
+    if (typeof window === "undefined") return undefined;
+
+    if (alwaysVisible) {
+      setVisible(true);
+      return undefined;
+    }
+
+    lastScrollYRef.current = window.scrollY;
+    travelRef.current = 0;
+
+    const onScroll = () => {
+      const nextY = window.scrollY;
+      const delta = nextY - lastScrollYRef.current;
+
+      if (nextY <= 36) {
+        setVisible(true);
+        travelRef.current = 0;
+        lastScrollYRef.current = nextY;
+        return;
+      }
+
+      if (Math.abs(delta) < 2) {
+        lastScrollYRef.current = nextY;
+        return;
+      }
+
+      if (delta > 0) {
+        travelRef.current = Math.max(0, travelRef.current) + delta;
+      } else {
+        travelRef.current = Math.min(0, travelRef.current) + delta;
+      }
+
+      if (travelRef.current > 42) {
+        setVisible(false);
+        travelRef.current = 0;
+      } else if (travelRef.current < -28) {
+        setVisible(true);
+        travelRef.current = 0;
+      }
+
+      lastScrollYRef.current = nextY;
+    };
+
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => window.removeEventListener("scroll", onScroll);
+  }, [alwaysVisible]);
+
+  return (
+    <div className={cn("menu-outer", !visible && !alwaysVisible && "menu-outer--hidden")}>
+      <div className="menu-inner">
+        <button
+          type="button"
+          className={cn("menu-link", pendingAction === "保存配置" && "menu-link--active")}
+          disabled={hasBlockingIssues}
+          onClick={() => onAction("保存配置")}
+        >
+          <div>{pendingAction === "保存配置" ? "处理中..." : "保存配置"}</div>
+        </button>
+        <button
+          type="button"
+          className={cn("menu-link", pendingAction === "启动任务" && "menu-link--active")}
+          disabled={hasBlockingIssues}
+          onClick={() => onAction("启动任务")}
+        >
+          <div>{pendingAction === "启动任务" ? "处理中..." : "启动任务"}</div>
+        </button>
+        <button
+          type="button"
+          className={cn("menu-link", pendingAction === "自检" && "menu-link--active")}
+          onClick={() => onAction("自检")}
+        >
+          <div>{pendingAction === "自检" ? "处理中..." : "自检"}</div>
+        </button>
       </div>
-    </section>
+    </div>
   );
 }
 
@@ -1637,14 +1871,14 @@ function MetricCard({ item, delay }) {
           <item.icon className="size-3.5" />
         </div>
         <div className="space-y-2">
-          <p className="text-[11px] font-medium uppercase tracking-[0.12em] text-muted-foreground">{item.label}</p>
+          <p className="text-xs font-medium uppercase tracking-[0.14em] text-muted-foreground">{item.label}</p>
           <div className="flex items-center gap-2">
-            <h3 className="text-xl font-semibold tracking-tight">{item.value}</h3>
-            <Badge variant={tone} className="rounded-md px-2 py-0 text-[11px]">
+            <h3 className="text-lg font-semibold tracking-tight">{item.value}</h3>
+            <Badge variant={tone} className="rounded-md px-2 py-0 text-xs">
               {tone === "success" ? "正常" : tone === "warning" ? "关注" : "信息"}
             </Badge>
           </div>
-          <p className="text-sm leading-5 text-muted-foreground">{item.note}</p>
+          <p className="text-sm leading-6 text-muted-foreground">{item.note}</p>
         </div>
       </CardContent>
     </Card>
@@ -1658,9 +1892,9 @@ function DecisionRow({ item }) {
         <item.icon className="size-4" />
       </div>
       <div className="min-w-0 space-y-2">
-        <p className="text-[11px] font-medium uppercase tracking-[0.12em] text-muted-foreground">{item.title}</p>
-        <p className="text-sm font-semibold leading-5 text-foreground">{item.value}</p>
-        <p className="text-sm leading-5 text-muted-foreground">{item.note}</p>
+        <p className="text-xs font-medium uppercase tracking-[0.14em] text-muted-foreground">{item.title}</p>
+        <p className="text-sm font-medium leading-6 text-foreground">{item.value}</p>
+        <p className="text-sm leading-6 text-muted-foreground">{item.note}</p>
       </div>
     </div>
   );
@@ -1672,7 +1906,7 @@ function Field({ label, dirty, error, helper, ...props }) {
       <div className="flex items-center justify-between gap-2">
         <span className="text-sm font-medium">{label}</span>
         {dirty ? (
-          <Badge variant="outline" className="rounded-md text-[11px]">
+          <Badge variant="outline" className="rounded-md text-xs">
             已修改
           </Badge>
         ) : null}
@@ -1686,7 +1920,7 @@ function Field({ label, dirty, error, helper, ...props }) {
         {...props}
       />
       {error ? <p className="text-xs text-red-600 dark:text-red-400">{error}</p> : null}
-      {helper ? <p className="text-xs leading-5 text-muted-foreground">{helper}</p> : null}
+      {helper ? <p className="text-xs leading-6 text-muted-foreground">{helper}</p> : null}
     </label>
   );
 }
@@ -1697,7 +1931,7 @@ function TimePickerField({ label, dirty, error, helper, className, ...props }) {
       <div className="flex items-center justify-between gap-2">
         <span className="text-sm font-medium">{label}</span>
         {dirty ? (
-          <Badge variant="outline" className="rounded-md text-[11px]">
+          <Badge variant="outline" className="rounded-md text-xs">
             已修改
           </Badge>
         ) : null}
@@ -1718,7 +1952,7 @@ function TimePickerField({ label, dirty, error, helper, className, ...props }) {
         />
       </div>
       {error ? <p className="text-xs text-red-600 dark:text-red-400">{error}</p> : null}
-      {helper ? <p className="text-xs leading-5 text-muted-foreground">{helper}</p> : null}
+      {helper ? <p className="text-xs leading-6 text-muted-foreground">{helper}</p> : null}
     </label>
   );
 }
@@ -1727,7 +1961,7 @@ function MiniPanel({ title, value, detail }) {
   return (
     <div className="rounded-xl border bg-muted/30 p-4">
       <p className="text-xs font-medium uppercase tracking-[0.14em] text-muted-foreground">{title}</p>
-      <h3 className="mt-2 text-xl font-semibold tracking-tight">{value}</h3>
+      <h3 className="mt-2 text-lg font-semibold tracking-tight">{value}</h3>
       <p className="mt-2 text-sm leading-6 text-muted-foreground">{detail}</p>
     </div>
   );
@@ -1740,7 +1974,7 @@ function AlertRow({ icon: Icon, title, detail }) {
         <Icon className="size-4" />
       </div>
       <div className="space-y-2">
-        <p className="text-sm font-semibold">{title}</p>
+        <p className="text-sm font-medium">{title}</p>
         <p className="text-sm leading-6 text-muted-foreground">{detail}</p>
       </div>
     </div>
