@@ -224,6 +224,10 @@ function App() {
     return "light";
   });
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
+    if (typeof window === "undefined") return false;
+    return window.localStorage.getItem("sidebar-collapsed") === "1";
+  });
   const [activeSection, setActiveSection] = useState("overview");
   const [topbarTitle, setTopbarTitle] = useState("DingTalk Dashboard");
   const [topbarTone, setTopbarTone] = useState("brand");
@@ -389,6 +393,112 @@ function App() {
     document.documentElement.classList.toggle("dark", theme === "dark");
     window.localStorage.setItem("console-theme", theme);
   }, [theme]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem("sidebar-collapsed", sidebarCollapsed ? "1" : "0");
+  }, [sidebarCollapsed]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (sidebarCollapsed) return;
+    document.documentElement.classList.remove("sidebar-expand-cursor-active");
+    document.querySelector(".custom-cursor")?.classList.remove("custom-cursor--hidden");
+  }, [sidebarCollapsed]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return undefined;
+    if (!sidebarCollapsed) return undefined;
+    if (window.matchMedia("(hover: none) and (pointer: coarse)").matches) return undefined;
+
+    const root = document.documentElement;
+    const sidebar = document.getElementById("stage-slideover-sidebar");
+    if (!sidebar) return undefined;
+
+    const follower = document.createElement("div");
+    follower.className = "sidebar-expand-follower";
+    follower.setAttribute("aria-hidden", "true");
+    follower.innerHTML =
+      '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path fill="none" d="M14 12H4m10 0l-4 4m4-4l-4-4m10-4v16"/></svg>';
+    document.body.appendChild(follower);
+
+    let active = false;
+    let targetX = -100;
+    let targetY = -100;
+    let currentX = -100;
+    let currentY = -100;
+    let rafId = 0;
+    let sidebarHovering = false;
+    const restoreMainCursor = () => {
+      document.querySelector(".custom-cursor")?.classList.remove("custom-cursor--hidden");
+    };
+
+    const syncActive = (next) => {
+      if (active === next) return;
+      active = next;
+      root.classList.toggle("sidebar-expand-cursor-active", active);
+      follower.classList.toggle("sidebar-expand-follower--active", active);
+      if (!active) restoreMainCursor();
+    };
+
+    const onSidebarEnter = () => {
+      sidebarHovering = true;
+      syncActive(true);
+    };
+
+    const onSidebarLeave = () => {
+      sidebarHovering = false;
+      syncActive(false);
+    };
+
+    const onMouseMove = (event) => {
+      targetX = event.clientX;
+      targetY = event.clientY;
+      if (!sidebarHovering && active) syncActive(false);
+    };
+
+    const onWindowLeave = () => {
+      syncActive(false);
+      targetX = -100;
+      targetY = -100;
+    };
+
+    const onWindowBlur = () => {
+      syncActive(false);
+    };
+
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "hidden") syncActive(false);
+    };
+
+    const animate = () => {
+      currentX += (targetX - currentX) * 0.16;
+      currentY += (targetY - currentY) * 0.16;
+      const scale = active ? 1 : 0.86;
+      follower.style.transform = `translate(${currentX}px, ${currentY}px) translate(-50%, -50%) scale(${scale})`;
+      rafId = window.requestAnimationFrame(animate);
+    };
+
+    document.addEventListener("mousemove", onMouseMove);
+    document.addEventListener("mouseleave", onWindowLeave);
+    window.addEventListener("blur", onWindowBlur);
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    sidebar.addEventListener("mouseenter", onSidebarEnter);
+    sidebar.addEventListener("mouseleave", onSidebarLeave);
+    animate();
+
+    return () => {
+      window.cancelAnimationFrame(rafId);
+      document.removeEventListener("mousemove", onMouseMove);
+      document.removeEventListener("mouseleave", onWindowLeave);
+      window.removeEventListener("blur", onWindowBlur);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+      sidebar.removeEventListener("mouseenter", onSidebarEnter);
+      sidebar.removeEventListener("mouseleave", onSidebarLeave);
+      root.classList.remove("sidebar-expand-cursor-active");
+      follower.remove();
+    };
+  }, [sidebarCollapsed]);
 
   useEffect(() => {
     if (typeof window === "undefined") return undefined;
@@ -789,7 +899,7 @@ function App() {
   };
 
   return (
-    <div className="min-h-screen bg-background text-foreground">
+    <div className="unified-icon-scale min-h-screen bg-background text-foreground">
       <div className="surface-grid pointer-events-none fixed inset-0 opacity-60 dark:opacity-40" />
 
       <div
@@ -801,8 +911,13 @@ function App() {
         onClick={() => setMobileNavOpen(false)}
       />
 
-      <div className="mx-auto min-h-screen max-w-[1600px] lg:grid lg:grid-cols-[280px_minmax(0,1fr)]">
-        <header className="sticky top-0 z-20 flex items-center justify-between border-b bg-background/90 px-4 py-3 backdrop-blur lg:hidden">
+      <div
+        className={cn(
+          "mx-auto min-h-screen max-w-[1600px] lg:grid",
+          sidebarCollapsed ? "lg:grid-cols-[92px_minmax(0,1fr)]" : "lg:grid-cols-[280px_minmax(0,1fr)]",
+        )}
+      >
+        <header className="sticky top-0 z-20 flex items-center justify-between border-b bg-background/90 px-4 py-4 backdrop-blur lg:hidden">
           <div className="min-w-0">
             <p className="text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground">
               Console
@@ -817,26 +932,39 @@ function App() {
         </header>
 
         <aside
+          id="stage-slideover-sidebar"
           className={cn(
-            "sidebar-scrollbar fixed inset-y-0 left-0 z-40 flex w-[280px] flex-col overflow-y-auto border-r bg-background/95 px-4 py-4 backdrop-blur transition-transform lg:sticky lg:top-0 lg:h-screen lg:translate-x-0",
+            "group/sidebar-rail sidebar-scrollbar fixed inset-y-0 left-0 z-40 flex w-[280px] flex-col overflow-y-auto border-r bg-background/95 p-4 backdrop-blur transition-[width,padding,transform] duration-500 ease-[cubic-bezier(0.22,1,0.36,1)] lg:sticky lg:top-0 lg:h-screen lg:translate-x-0 lg:p-4",
+            sidebarCollapsed
+              ? "lg:w-[88px] lg:cursor-e-resize rtl:lg:cursor-w-resize"
+              : "lg:w-[280px]",
             mobileNavOpen ? "translate-x-0" : "-translate-x-full",
           )}
+          onClick={(event) => {
+            if (!sidebarCollapsed) return;
+            if (!(event.target instanceof Element)) return;
+            if (event.target.closest("[data-sidebar-item='true']")) return;
+            setSidebarCollapsed(false);
+          }}
         >
           <div className="space-y-6">
-            <LogoRegion />
-            <SidebarNav activeSection={activeSection} onNavClick={handleNavClick} />
-            <SidebarSummaryCard scheduleSummary={scheduleSummary} />
+            <LogoRegion collapsed={sidebarCollapsed} onToggleCollapse={() => setSidebarCollapsed((value) => !value)} />
+            <SidebarNav collapsed={sidebarCollapsed} activeSection={activeSection} onNavClick={handleNavClick} />
+            <SidebarSummaryCard collapsed={sidebarCollapsed} scheduleSummary={scheduleSummary} />
           </div>
 
-          <div className="mt-auto space-y-3 pt-6">
-            <div className="fade-up space-y-1 text-xs text-muted-foreground" style={{ "--delay": "260ms" }}>
+          <div className="mt-auto space-y-4 pt-6">
+            <div
+              className={cn("fade-up space-y-2 text-sm leading-5 text-muted-foreground", sidebarCollapsed && "lg:hidden")}
+              style={{ "--delay": "260ms" }}
+            >
               <p>版本 v0.4.0</p>
               <p>{theme === "light" ? "shadcn/ui · Light" : "shadcn/ui · Dark"}</p>
             </div>
           </div>
         </aside>
 
-        <main className="min-w-0 px-4 pb-28 pt-4 sm:px-6 lg:px-8 lg:pt-4 lg:pb-8">
+        <main className="min-w-0 px-4 pb-28 pt-4 sm:px-6 lg:px-6 lg:pt-4 lg:pb-6">
           <TopbarRegion
             title={topbarTitle}
             tone={topbarTone}
@@ -847,7 +975,7 @@ function App() {
             onToggleTheme={() => setTheme((value) => (value === "light" ? "dark" : "light"))}
           />
 
-          <section className="content-region mt-6 space-y-10 xl:space-y-12">
+          <section className="content-region mt-6 space-y-6 xl:space-y-6">
             <RegionSection
               title="监控总览与执行态势"
               description="用于查看系统状态、关键指标和执行判断。"
@@ -858,7 +986,7 @@ function App() {
                     {hasBlockingIssues ? (
                       <Card className="border-red-200 bg-red-50/80 dark:border-red-900/40 dark:bg-red-950/20">
                         <CardHeader className="pb-4">
-                          <div className="flex flex-wrap items-center gap-3">
+                          <div className="flex flex-wrap items-center gap-2">
                             <Badge variant="destructive">阻断项 {validationIssues.length}</Badge>
                             <CardTitle className="text-sm">保存与启动前需要先修复以下问题</CardTitle>
                           </div>
@@ -882,11 +1010,11 @@ function App() {
 
                     <div className="grid gap-4 xl:grid-cols-[1.2fr_0.8fr]">
                       <Card className="bg-muted/20">
-                        <CardHeader className="pb-3">
+                        <CardHeader className="pb-4">
                           <CardTitle className="text-base">现在最该看的信息</CardTitle>
                           <CardDescription>只保留当前决策必需的信息。</CardDescription>
                         </CardHeader>
-                        <CardContent className="space-y-3">
+                        <CardContent className="space-y-4">
                           {priorities.map((item) => (
                             <DecisionRow key={item.title} item={item} />
                           ))}
@@ -894,13 +1022,13 @@ function App() {
                       </Card>
 
                       <Card className="bg-muted/20">
-                        <CardHeader className="pb-3">
+                        <CardHeader className="pb-4">
                           <CardTitle className="text-base">推荐操作路径</CardTitle>
                           <CardDescription>按顺序处理更稳妥。</CardDescription>
                         </CardHeader>
-                        <CardContent className="space-y-3">
+                        <CardContent className="space-y-4">
                           {quickChecklist.map((item, index) => (
-                            <div key={item} className="flex items-start gap-3 rounded-lg border bg-background px-3 py-3 text-sm">
+                            <div key={item} className="flex items-start gap-2 rounded-lg border bg-background px-4 py-4 text-sm">
                               <Badge variant="outline" className="mt-0.5 rounded-md">
                                 {index + 1}
                               </Badge>
@@ -919,12 +1047,12 @@ function App() {
                 <div className="space-y-6">
                   <section className="fade-up" style={{ "--delay": "180ms" }}>
                     <Card>
-                    <CardHeader className="flex flex-col gap-4 border-b sm:flex-row sm:items-center sm:justify-between">
-                      <div className="space-y-1.5">
-                        <CardTitle>运行状态</CardTitle>
-                        <CardDescription>先判断当前能不能执行。</CardDescription>
-                      </div>
-                    </CardHeader>
+                      <CardHeader className="flex flex-col gap-4 border-b sm:flex-row sm:items-center sm:justify-between">
+                        <div className="space-y-2">
+                          <CardTitle>运行状态</CardTitle>
+                          <CardDescription>先判断当前能不能执行。</CardDescription>
+                        </div>
+                      </CardHeader>
                       <CardContent className="space-y-4 pt-6">
                         <div className="flex flex-wrap gap-2">
                           {statusTags.map((item) => (
@@ -933,7 +1061,7 @@ function App() {
                             </Badge>
                           ))}
                         </div>
-                        <div className="space-y-3">
+                        <div className="space-y-4">
                           {statusRows.map(([label, value, emphasized]) => (
                             <SummaryRow key={label} label={label} value={value} emphasized={emphasized} />
                           ))}
@@ -953,7 +1081,7 @@ function App() {
                 <section id="actions" className="fade-up scroll-mt-28" style={{ "--delay": "160ms" }}>
                   <Card>
                     <CardHeader className="flex flex-col gap-4 border-b sm:flex-row sm:items-center sm:justify-between">
-                      <div className="space-y-1.5">
+                      <div className="space-y-2">
                         <CardTitle>快捷动作</CardTitle>
                         <CardDescription>优先处理高频动作。</CardDescription>
                       </div>
@@ -974,7 +1102,7 @@ function App() {
                           </ActionButton>
                         ))}
                       </div>
-                      <div className="flex items-center gap-3 rounded-lg border bg-muted/30 px-4 py-3 text-sm text-muted-foreground">
+                      <div className="flex items-center gap-2 rounded-lg border bg-muted/30 px-4 py-4 text-sm text-muted-foreground">
                         <SquareTerminal className="size-4 shrink-0" />
                         <p>推荐顺序：保存配置后先自检，再刷新设备状态，确认无误后试运行。</p>
                       </div>
@@ -985,13 +1113,13 @@ function App() {
                 <section id="windows" className="fade-up scroll-mt-28" style={{ "--delay": "220ms" }}>
                   <Card>
                     <CardHeader className="flex flex-col gap-4 border-b sm:flex-row sm:items-center sm:justify-between">
-                      <div className="space-y-1.5">
+                      <div className="space-y-2">
                         <CardTitle>排期设置</CardTitle>
                         <CardDescription>看时间、改时间、重抽时间。</CardDescription>
                       </div>
                     </CardHeader>
                     <CardContent className="space-y-4 pt-6">
-                      <div className="grid gap-3 lg:grid-cols-3">
+                      <div className="grid gap-2 lg:grid-cols-3">
                         <MiniPanel title="今日下一次计划" value={scheduleSummary} detail="默认按时间窗口抽取，也支持手动精确指定到秒。" />
                         <MiniPanel title="最近完成日期" value="2026-04-09" detail="两个窗口都已正常落库。" />
                         <div className="rounded-xl border bg-muted/30 p-4">
@@ -1019,15 +1147,15 @@ function App() {
                             style={{ "--delay": `${260 + index * 60}ms` }}
                           >
                             <CardHeader>
-                              <div className="flex items-start justify-between gap-3">
-                                <div className="flex flex-col gap-1">
+                              <div className="flex items-start justify-between gap-2">
+                                <div className="flex flex-col gap-2">
                                   <CardTitle>{item.title}</CardTitle>
                                   <CardDescription>{item.note}</CardDescription>
                                 </div>
                               </div>
                             </CardHeader>
                             <CardContent className="space-y-4">
-                              <div className="grid gap-3 sm:grid-cols-2">
+                              <div className="grid gap-2 sm:grid-cols-2">
                                 <Field
                                   label="开始时间"
                                   value={windowValues[`${item.title}-start`]}
@@ -1045,15 +1173,15 @@ function App() {
                               </div>
                               <Separator />
                               <div className="rounded-xl border bg-background p-4">
-                                <div className="flex items-start justify-between gap-3">
-                                  <div className="flex flex-col gap-1">
+                                <div className="flex items-start justify-between gap-2">
+                                  <div className="flex flex-col gap-2">
                                     <p className="text-sm font-semibold text-foreground">手动指定下一次执行</p>
                                     <p className="text-xs leading-5 text-muted-foreground">
                                       使用 Time Picker 精确到秒。保存配置后会覆盖当前下一次执行时间。
                                     </p>
                                   </div>
                                 </div>
-                                <div className="mt-4 flex flex-col gap-3">
+                                <div className="mt-4 flex flex-col gap-2">
                                   <TimePickerField
                                     label="指定下一次打卡时间"
                                     value={windowValues[`${item.title}-custom`]}
@@ -1061,7 +1189,7 @@ function App() {
                                     dirty={isWindowFieldDirty(item.title, "custom")}
                                     error={validation[`${item.title}-custom`]}
                                   />
-                                  <div className="grid gap-3 sm:grid-cols-2">
+                                  <div className="grid gap-2 sm:grid-cols-2">
                                     <SummaryRow label="保存后生效时间" value={windowValues[`${item.title}-custom`]} emphasized />
                                     <SummaryRow label="当前下一次执行" value={windowValues[`${item.title}-selected`]} />
                                   </div>
@@ -1079,7 +1207,7 @@ function App() {
                 <section id="config" className="fade-up scroll-mt-28" style={{ "--delay": "280ms" }}>
                   <Card>
                     <CardHeader className="flex flex-col gap-4 border-b sm:flex-row sm:items-center sm:justify-between">
-                      <div className="space-y-1.5">
+                      <div className="space-y-2">
                         <CardTitle>基础参数</CardTitle>
                         <CardDescription>低频参数集中放在这里。</CardDescription>
                       </div>
@@ -1130,13 +1258,13 @@ function App() {
                 <div className="space-y-6">
                   <section className="fade-up" style={{ "--delay": "220ms" }}>
                     <Card>
-                    <CardHeader className="flex flex-col gap-4 border-b sm:flex-row sm:items-center sm:justify-between">
-                      <div className="space-y-1.5">
+                      <CardHeader className="flex flex-col gap-4 border-b sm:flex-row sm:items-center sm:justify-between">
+                        <div className="space-y-2">
                           <CardTitle>提醒</CardTitle>
                           <CardDescription>先处理风险项。</CardDescription>
                         </div>
                       </CardHeader>
-                      <CardContent className="space-y-3 pt-6">
+                      <CardContent className="space-y-4 pt-6">
                         <AlertRow
                           icon={TriangleAlert}
                           title="工作日接口依赖在线"
@@ -1165,14 +1293,14 @@ function App() {
                         <CardTitle>日志</CardTitle>
                         <CardDescription>只看最近动作和结果。</CardDescription>
                       </CardHeader>
-                      <CardContent className="space-y-3">
+                      <CardContent className="space-y-4">
                         {logs.map((log) => (
                           <Card key={`${log.time}-${log.title}`} className="card-hover bg-muted/20">
-                            <CardContent className="grid gap-3 p-4 sm:grid-cols-[auto_1fr_auto] sm:items-center">
+                            <CardContent className="grid gap-2 p-4 sm:grid-cols-[auto_1fr_auto] sm:items-center">
                               <Badge variant="outline" className="rounded-md">
                                 {log.time}
                               </Badge>
-                              <div className="space-y-1">
+                              <div className="space-y-2">
                                 <p className="text-sm font-semibold">{log.title}</p>
                                 <p className="text-sm leading-6 text-muted-foreground">{log.detail}</p>
                               </div>
@@ -1192,10 +1320,10 @@ function App() {
                         <CardTitle>时间线</CardTitle>
                         <CardDescription>快速回看今天发生了什么。</CardDescription>
                       </CardHeader>
-                      <CardContent className="space-y-3">
+                      <CardContent className="space-y-4">
                         {timeline.map((item, index) => (
                           <div key={item}>
-                            <div className="flex items-start gap-3 text-sm">
+                            <div className="flex items-start gap-2 text-sm">
                               <Badge variant="outline" className="rounded-md">
                                 {index + 1}
                               </Badge>
@@ -1203,7 +1331,7 @@ function App() {
                                 {item}
                               </p>
                             </div>
-                            {index < timeline.length - 1 ? <Separator className="mt-3" /> : null}
+                            {index < timeline.length - 1 ? <Separator className="mt-4" /> : null}
                           </div>
                         ))}
                       </CardContent>
@@ -1232,7 +1360,7 @@ function App() {
           </section>
         </main>
 
-        <div className="fixed inset-x-0 bottom-0 z-20 grid grid-cols-3 gap-2 border-t bg-background/95 px-4 py-3 backdrop-blur lg:hidden">
+        <div className="fixed inset-x-0 bottom-0 z-20 grid grid-cols-3 gap-2 border-t bg-background/95 px-4 py-4 backdrop-blur lg:hidden">
           <ActionButton
             variant="ghost"
             icon={Stethoscope}
@@ -1276,40 +1404,79 @@ function ActionButton({ icon: Icon, children, isPending = false, className, size
   );
 }
 
-function LogoRegion() {
+function LogoRegion({ collapsed, onToggleCollapse }) {
   return (
     <div className="fade-up" style={{ "--delay": "40ms" }}>
-      <div className="toolbar-surface flex h-16 items-center gap-3 px-4">
-        <div className="flex size-9 items-center justify-center rounded-md border bg-background">
-          <Bot className="size-4.5" />
+      <div
+        className={cn(
+          "flex h-12 items-center rounded-lg bg-background/70 backdrop-blur",
+          collapsed ? "justify-center px-0" : "justify-between px-0",
+        )}
+      >
+        <div className="flex size-10 shrink-0 items-center justify-center rounded-md bg-black text-white dark:bg-white dark:text-black">
+          <Bot className="size-5" />
         </div>
-        <div className="min-w-0 flex-1">
-          <h2 className="truncate text-base font-semibold tracking-tight">DingTalk</h2>
-        </div>
+
+        {!collapsed ? (
+          <button
+            type="button"
+            className="no-draggable hidden h-9 w-9 cursor-w-resize items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground focus:outline-none lg:flex rtl:cursor-e-resize"
+            onClick={onToggleCollapse}
+            aria-expanded="true"
+            aria-controls="stage-slideover-sidebar"
+            aria-label="收起导航栏"
+            title="收起导航栏"
+            data-testid="close-sidebar-button"
+            data-state="open"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true">
+              <path d="M10.15 16.15L6.7 12.7q-.3-.3-.3-.7t.3-.7l3.45-3.45q.25-.25.55-.125t.3.475v7.6q0 .35-.3.475t-.55-.125M13 20V4q0-.425.288-.712T14 3t.713.288T15 4v16q0 .425-.288.713T14 21t-.712-.288T13 20" />
+            </svg>
+          </button>
+        ) : null}
       </div>
     </div>
   );
 }
 
-function SidebarNav({ activeSection, onNavClick }) {
+function SidebarNav({ collapsed, activeSection, onNavClick }) {
   return (
-    <nav className="fade-up space-y-1.5" style={{ "--delay": "100ms" }}>
+    <nav
+      className={cn(
+        "fade-up space-y-4",
+        collapsed && "lg:flex lg:flex-col lg:items-center",
+      )}
+      style={{ "--delay": "100ms" }}
+    >
       {navItems.map((item) => {
         const Icon = item.icon;
         return (
           <a
             key={item.id}
             href={`#${item.id}`}
+            data-sidebar-item="true"
+            title={item.label}
+            aria-label={item.label}
             className={cn(
-              "flex h-10 items-center gap-3 rounded-md border px-3 text-sm transition-colors",
+              "flex h-10 w-full items-center gap-2 overflow-hidden rounded-md border px-2 text-sm leading-5 transition-[width,padding,gap,background-color,color,border-color] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]",
+              collapsed && "lg:h-10 lg:w-10 lg:justify-center lg:px-0 lg:gap-0",
               activeSection === item.id
                 ? "border-border bg-accent text-accent-foreground"
                 : "border-transparent text-muted-foreground hover:border-border hover:bg-accent hover:text-accent-foreground",
             )}
             onClick={(event) => onNavClick(event, item.id)}
           >
-            <Icon className="size-4" />
-            <span>{item.label}</span>
+            <Icon className="size-4.5 shrink-0" />
+            <span
+              className={cn(
+                "font-medium whitespace-nowrap transition-[max-width,opacity,transform] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]",
+                collapsed
+                  ? "lg:pointer-events-none lg:absolute lg:max-w-0 lg:opacity-0 lg:-translate-x-1"
+                  : "lg:max-w-[11rem] lg:opacity-100 lg:translate-x-0",
+              )}
+            >
+              {item.label}
+            </span>
           </a>
         );
       })}
@@ -1317,14 +1484,14 @@ function SidebarNav({ activeSection, onNavClick }) {
   );
 }
 
-function SidebarSummaryCard({ scheduleSummary }) {
+function SidebarSummaryCard({ collapsed, scheduleSummary }) {
   return (
-    <Card className="fade-up" style={{ "--delay": "160ms" }}>
+    <Card className={cn("fade-up", collapsed && "lg:hidden")} style={{ "--delay": "160ms" }}>
       <CardHeader className="pb-4">
         <CardTitle className="text-sm">今日概览</CardTitle>
         <CardDescription>优先看状态和执行窗口</CardDescription>
       </CardHeader>
-      <CardContent className="space-y-3">
+      <CardContent className="space-y-4">
         <SummaryRow label="工作日状态" value="已校验" />
         <SummaryRow label="设备连接" value="1 台已连接" />
         <SummaryRow label="下一次计划" value={scheduleSummary} emphasized />
@@ -1344,9 +1511,9 @@ function RegionSection({ title, description, children }) {
           : "brand";
 
   return (
-    <section className="space-y-5" data-region-title={title} data-region-tone={tone}>
-      <div className="flex items-end justify-between gap-4 border-b pb-3">
-        <div className="flex min-w-0 flex-col gap-1">
+    <section className="space-y-6" data-region-title={title} data-region-tone={tone}>
+      <div className="flex items-end justify-between gap-4 border-b pb-4">
+        <div className="flex min-w-0 flex-col gap-2">
           <h3 className="text-lg font-semibold tracking-tight">{title}</h3>
           <p className="max-w-3xl text-sm leading-6 text-muted-foreground">{description}</p>
         </div>
@@ -1394,9 +1561,9 @@ function TopbarRegion({ title, tone, theme, pendingAction, hasBlockingIssues, on
 
   return (
     <section className="topbar-region sticky top-4 z-10">
-      <div className="toolbar-surface flex min-h-16 flex-col gap-3 px-4 py-3 xl:h-16 xl:min-h-0 xl:flex-row xl:items-center xl:justify-between xl:gap-4 xl:py-0">
+      <div className="toolbar-surface flex min-h-16 flex-col gap-2 px-4 py-4 xl:h-16 xl:min-h-0 xl:flex-row xl:items-center xl:justify-between xl:gap-4 xl:py-0">
         <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2">
             <span
               key={`${title}-indicator`}
               className={cn("title-swap topbar-indicator", `topbar-indicator--${tone}`)}
@@ -1452,7 +1619,7 @@ function TopbarRegion({ title, tone, theme, pendingAction, hasBlockingIssues, on
 
 function SummaryRow({ label, value, emphasized = false }) {
   return (
-    <div className="flex items-start justify-between gap-4 rounded-lg border bg-muted/20 px-3 py-2.5">
+    <div className="flex items-start justify-between gap-4 rounded-lg border bg-muted/20 px-4 py-2">
       <span className="text-sm text-muted-foreground">{label}</span>
       <span className={cn("max-w-[60%] text-right text-sm text-muted-foreground", emphasized && "font-medium text-foreground")}>
         {value}
@@ -1465,11 +1632,11 @@ function MetricCard({ item, delay }) {
   const tone = statusTone(item.value);
   return (
     <Card className="fade-up card-hover bg-muted/20" style={{ "--delay": delay }}>
-      <CardContent className="space-y-3 p-4">
+      <CardContent className="space-y-4 p-4">
         <div className="flex size-9 items-center justify-center rounded-md border bg-background">
           <item.icon className="size-3.5" />
         </div>
-        <div className="space-y-1">
+        <div className="space-y-2">
           <p className="text-[11px] font-medium uppercase tracking-[0.12em] text-muted-foreground">{item.label}</p>
           <div className="flex items-center gap-2">
             <h3 className="text-xl font-semibold tracking-tight">{item.value}</h3>
@@ -1486,11 +1653,11 @@ function MetricCard({ item, delay }) {
 
 function DecisionRow({ item }) {
   return (
-    <div className="flex items-start gap-3 rounded-lg border bg-background px-3 py-3">
+    <div className="flex items-start gap-2 rounded-lg border bg-background px-4 py-4">
       <div className="flex size-8 shrink-0 items-center justify-center rounded-md border bg-muted/40">
         <item.icon className="size-4" />
       </div>
-      <div className="min-w-0 space-y-1">
+      <div className="min-w-0 space-y-2">
         <p className="text-[11px] font-medium uppercase tracking-[0.12em] text-muted-foreground">{item.title}</p>
         <p className="text-sm font-semibold leading-5 text-foreground">{item.value}</p>
         <p className="text-sm leading-5 text-muted-foreground">{item.note}</p>
@@ -1502,7 +1669,7 @@ function DecisionRow({ item }) {
 function Field({ label, dirty, error, helper, ...props }) {
   return (
     <label className="space-y-2">
-      <div className="flex items-center justify-between gap-3">
+      <div className="flex items-center justify-between gap-2">
         <span className="text-sm font-medium">{label}</span>
         {dirty ? (
           <Badge variant="outline" className="rounded-md text-[11px]">
@@ -1527,7 +1694,7 @@ function Field({ label, dirty, error, helper, ...props }) {
 function TimePickerField({ label, dirty, error, helper, className, ...props }) {
   return (
     <label className="flex flex-col gap-2">
-      <div className="flex items-center justify-between gap-3">
+      <div className="flex items-center justify-between gap-2">
         <span className="text-sm font-medium">{label}</span>
         {dirty ? (
           <Badge variant="outline" className="rounded-md text-[11px]">
@@ -1561,18 +1728,18 @@ function MiniPanel({ title, value, detail }) {
     <div className="rounded-xl border bg-muted/30 p-4">
       <p className="text-xs font-medium uppercase tracking-[0.14em] text-muted-foreground">{title}</p>
       <h3 className="mt-2 text-xl font-semibold tracking-tight">{value}</h3>
-      <p className="mt-1 text-sm leading-6 text-muted-foreground">{detail}</p>
+      <p className="mt-2 text-sm leading-6 text-muted-foreground">{detail}</p>
     </div>
   );
 }
 
 function AlertRow({ icon: Icon, title, detail }) {
   return (
-    <div className="flex items-start gap-3 rounded-xl border bg-muted/20 p-4">
+    <div className="flex items-start gap-2 rounded-xl border bg-muted/20 p-4">
       <div className="flex size-9 shrink-0 items-center justify-center rounded-full border bg-background">
         <Icon className="size-4" />
       </div>
-      <div className="space-y-1">
+      <div className="space-y-2">
         <p className="text-sm font-semibold">{title}</p>
         <p className="text-sm leading-6 text-muted-foreground">{detail}</p>
       </div>
