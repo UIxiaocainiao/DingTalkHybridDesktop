@@ -178,6 +178,12 @@ npm run build
 
 构建产物目录：`frontend/dist`。
 
+也可以直接用脚本自动写入并构建：
+
+```bash
+bash scripts/build_frontend_for_public.sh api.example.com
+```
+
 ### 3) 七牛上传前端静态资源
 
 - 创建公开读空间
