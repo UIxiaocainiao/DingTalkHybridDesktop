@@ -49,8 +49,8 @@ import {
   saveConfig,
   startScheduler,
   stopScheduler,
-} from "./lib/api";
-import { cn } from "./lib/utils";
+} from "./lib/api.js";
+import { cn } from "./lib/utils.js";
 
 gsap.registerPlugin(GSAPSplitText);
 
