@@ -8,6 +8,7 @@ import {
   CheckCheck,
   ChevronLeft,
   ChevronRight,
+  CircleHelp,
   CirclePlay,
   ClipboardList,
   Download,
@@ -58,6 +59,7 @@ gsap.registerPlugin(GSAPSplitText);
 const navItems = [
   { id: "overview", label: "监控总览", icon: Gauge },
   { id: "actions", label: "任务配置", icon: FolderCog },
+  { id: "guide", label: "使用说明", icon: CircleHelp },
   { id: "records", label: "打卡记录", icon: ClipboardList },
   { id: "logs", label: "告警日志", icon: BellRing },
 ];
@@ -119,15 +121,18 @@ const configGroups = [
   },
 ];
 
+const unifiedWindowAccentClass =
+  "border-border/70 bg-muted/25 dark:border-border/80 dark:bg-muted/15";
+const unifiedWindowBadgeClass =
+  "border-border/70 bg-muted/80 text-foreground";
+
 const windowsData = [
   {
     name: "morning",
     title: "上午窗口",
     eyebrow: "AM Window",
-    accentClass:
-      "border-amber-200/70 bg-amber-50/40 dark:border-amber-900/40 dark:bg-amber-950/10",
-    badgeClass:
-      "border-amber-500/20 bg-amber-500/10 text-amber-700 dark:text-amber-300",
+    accentClass: unifiedWindowAccentClass,
+    badgeClass: unifiedWindowBadgeClass,
     icon: SunMedium,
     note: "系统会在这个区间内随机抽取一个执行时刻。",
     defaultStart: "09:05",
@@ -138,10 +143,8 @@ const windowsData = [
     name: "evening",
     title: "下午窗口",
     eyebrow: "PM Window",
-    accentClass:
-      "border-sky-200/70 bg-sky-50/40 dark:border-sky-900/40 dark:bg-sky-950/10",
-    badgeClass:
-      "border-sky-500/20 bg-sky-500/10 text-sky-700 dark:text-sky-300",
+    accentClass: unifiedWindowAccentClass,
+    badgeClass: unifiedWindowBadgeClass,
     icon: MoonStar,
     note: "随机逻辑与上午一致，支持独立控制。",
     defaultStart: "18:05",
@@ -1081,6 +1084,7 @@ function App() {
       let nextTone = "overview";
 
       for (const region of currentRegions) {
+        if (region.offsetParent === null) continue;
         const rect = region.getBoundingClientRect();
         if (rect.top <= threshold) {
           nextTitle = region.getAttribute("data-region-title") || nextTitle;
@@ -1143,13 +1147,42 @@ function App() {
 
   const handleNavClick = (event, id) => {
     setMobileNavOpen(false);
+    if (id === "guide") {
+      event.preventDefault();
+      setActiveSection("guide");
+      setTopbarTitle("使用说明");
+      setTopbarTone("config");
+      window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}#guide`);
+      window.scrollTo({ top: 0, left: 0, behavior: "smooth" });
+      return;
+    }
 
-    if (id !== "overview") return;
+    if (id === "overview") {
+      event.preventDefault();
+      setActiveSection("overview");
+      setTopbarTitle("监控总览与执行态势");
+      setTopbarTone("overview");
+      window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}`);
+      window.scrollTo({ top: 0, left: 0, behavior: "smooth" });
+      return;
+    }
 
     event.preventDefault();
-    setActiveSection("overview");
-    window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}`);
-    window.scrollTo({ top: 0, left: 0, behavior: "smooth" });
+    setActiveSection(id);
+    if (id === "actions") {
+      setTopbarTitle("任务配置与排期管理");
+      setTopbarTone("config");
+    } else if (id === "records") {
+      setTopbarTitle("打卡记录");
+      setTopbarTone("records");
+    } else if (id === "logs") {
+      setTopbarTitle("告警日志与通知中心");
+      setTopbarTone("notify");
+    }
+    window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}#${id}`);
+    window.requestAnimationFrame(() => {
+      document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
   };
 
   const isConfigFieldDirty = (label) => configValues[label] !== savedConfigValues[label];
@@ -1416,37 +1449,30 @@ function App() {
             setSidebarCollapsed(false);
           }}
         >
-          <div className="space-y-6">
+          <div className="flex h-full min-h-0 flex-col gap-3.5">
             <LogoRegion collapsed={sidebarCollapsed} onToggleCollapse={() => setSidebarCollapsed((value) => !value)} />
             <SidebarNav collapsed={sidebarCollapsed} activeSection={activeSection} onNavClick={handleNavClick} />
             {/* <SidebarSummaryCard collapsed={sidebarCollapsed} scheduleSummary={scheduleSummary} /> */}
           </div>
-
-          <div className="mt-auto space-y-4 pt-6">
-            <div
-              className={cn("fade-up space-y-2 text-sm leading-6 text-muted-foreground", sidebarCollapsed && "lg:hidden")}
-              style={{ "--delay": "260ms" }}
-            >
-              <p>版本 {APP_VERSION}</p>
-              <p>{theme === "light" ? "DingTalk · Light" : "DingTalk · Dark"}</p>
-            </div>
-          </div>
         </aside>
 
         <main className="min-w-0 px-3 pb-40 pt-3 sm:px-4 sm:pb-36 lg:px-4 lg:pt-3 lg:pb-6">
-          <TopbarRegion
-            title={topbarTitle}
-            tone={topbarTone}
-            theme={theme}
-            sidebarCollapsed={sidebarCollapsed}
-            onToggleTheme={() => setTheme((value) => (value === "light" ? "dark" : "light"))}
-          />
+          {activeSection !== "guide" && (
+            <TopbarRegion
+              title={topbarTitle}
+              tone={topbarTone}
+              theme={theme}
+              sidebarCollapsed={sidebarCollapsed}
+              onToggleTheme={() => setTheme((value) => (value === "light" ? "dark" : "light"))}
+            />
+          )}
 
           <section className="content-region mt-2.5 space-y-8 sm:mt-3 sm:space-y-10 lg:mt-5 xl:space-y-14">
-            <RegionSection
-              title="监控总览与执行态势"
-              description="用于查看系统状态、关键指标和执行判断。"
-            >
+            <div className={cn(activeSection === "guide" && "hidden")}>
+                <RegionSection
+                  title="监控总览与执行态势"
+                  description="用于查看系统状态、关键指标和执行判断。"
+                >
               <div className="dashboard-layout">
                 <section id="overview" className="dashboard-block dashboard-block--wide fade-up scroll-mt-28" style={{ "--delay": "60ms" }}>
                   <Card className="region-card h-full overflow-hidden">
@@ -1616,13 +1642,13 @@ function App() {
                     </CardHeader>
                     <CardContent className="region-card-content space-y-5 pt-5">
                       <SectionState {...actionStatus} />
-                      <div className="grid gap-4 xl:grid-cols-[1.35fr_1fr]">
-                        <Card className="bg-muted/20">
+                      <div className="grid items-stretch gap-4 lg:grid-cols-2">
+                        <Card className="flex h-full flex-col bg-muted/20">
                           <CardHeader className="pb-4">
                             <CardTitle>优先动作</CardTitle>
                             <CardDescription>先做确认链路，再决定是否正式启动。</CardDescription>
                           </CardHeader>
-                          <CardContent className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                          <CardContent className="grid flex-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
                             {primaryActions.map((item, index) => (
                               <ActionTile
                                 key={item.label}
@@ -1636,51 +1662,57 @@ function App() {
                           </CardContent>
                         </Card>
 
-                        <div className="grid gap-4">
-                          <Card className="bg-muted/20">
-                            <CardHeader className="pb-4">
-                              <CardTitle>运行控制</CardTitle>
-                              <CardDescription>控制后端调度进程的启动、停止和调试。</CardDescription>
-                            </CardHeader>
-                            <CardContent className="space-y-3">
-                              {runtimeActions.map((item) => (
-                                <ActionButton
-                                  key={item.label}
-                                  variant={item.style}
-                                  icon={item.icon}
-                                  size="sm"
-                                  className="w-full justify-start"
-                                  isPending={pendingAction === item.label}
-                                  onClick={() => handleAction(item.label)}
-                                >
-                                  {item.label}
-                                </ActionButton>
-                              ))}
-                            </CardContent>
-                          </Card>
+                        <Card className="flex h-full flex-col bg-muted/20">
+                          <CardHeader className="pb-4">
+                            <CardTitle>运行控制与辅助动作</CardTitle>
+                            <CardDescription>右侧合并为一块内容，运行控制和辅助动作横排展示。</CardDescription>
+                          </CardHeader>
+                          <CardContent className="grid flex-1 gap-4 md:grid-cols-2">
+                            <div className="rounded-xl border bg-background/70 p-4">
+                              <div className="mb-3 space-y-1">
+                                <p className="text-sm font-medium text-foreground">运行控制</p>
+                                <p className="text-xs leading-6 text-muted-foreground">控制后端调度进程的启动、停止和调试。</p>
+                              </div>
+                              <div className="space-y-3">
+                                {runtimeActions.map((item) => (
+                                  <ActionButton
+                                    key={item.label}
+                                    variant={item.style}
+                                    icon={item.icon}
+                                    size="sm"
+                                    className="w-full justify-start"
+                                    isPending={pendingAction === item.label}
+                                    onClick={() => handleAction(item.label)}
+                                  >
+                                    {item.label}
+                                  </ActionButton>
+                                ))}
+                              </div>
+                            </div>
 
-                          <Card className="bg-muted/20">
-                            <CardHeader className="pb-4">
-                              <CardTitle>辅助动作</CardTitle>
-                              <CardDescription>低频但常用的辅助入口。</CardDescription>
-                            </CardHeader>
-                            <CardContent className="space-y-3">
-                              {supportActions.map((item) => (
-                                <ActionButton
-                                  key={item.label}
-                                  variant={item.style}
-                                  icon={item.icon}
-                                  size="sm"
-                                  className="w-full justify-start"
-                                  isPending={pendingAction === item.label}
-                                  onClick={() => handleAction(item.label)}
-                                >
-                                  {item.label}
-                                </ActionButton>
-                              ))}
-                            </CardContent>
-                          </Card>
-                        </div>
+                            <div className="rounded-xl border bg-background/70 p-4">
+                              <div className="mb-3 space-y-1">
+                                <p className="text-sm font-medium text-foreground">辅助动作</p>
+                                <p className="text-xs leading-6 text-muted-foreground">低频但常用的辅助入口。</p>
+                              </div>
+                              <div className="space-y-3">
+                                {supportActions.map((item) => (
+                                  <ActionButton
+                                    key={item.label}
+                                    variant={item.style}
+                                    icon={item.icon}
+                                    size="sm"
+                                    className="w-full justify-start"
+                                    isPending={pendingAction === item.label}
+                                    onClick={() => handleAction(item.label)}
+                                  >
+                                    {item.label}
+                                  </ActionButton>
+                                ))}
+                              </div>
+                            </div>
+                          </CardContent>
+                        </Card>
                       </div>
                       <div className="flex items-center gap-2 rounded-lg border bg-muted/30 px-4 py-4 text-sm text-muted-foreground">
                         <SquareTerminal className="size-4 shrink-0" />
@@ -1878,10 +1910,10 @@ function App() {
               </div>
             </RegionSection>
 
-            <RegionSection
-              title="打卡记录"
-              description="查看历史打卡记录。"
-            >
+                <RegionSection
+                  title="打卡记录"
+                  description="查看历史打卡记录。"
+                >
               <div className="dashboard-layout">
                 <section id="records" className="dashboard-block dashboard-block--wide fade-up scroll-mt-28" style={{ "--delay": "180ms" }}>
                   <Card className="region-card h-full">
@@ -2194,17 +2226,119 @@ function App() {
                   </Card>
                 </section>
               </div>
+              <div className="pt-1 text-center text-xs leading-6 text-muted-foreground">
+                版本 {APP_VERSION}
+              </div>
             </RegionSection>
+
+            </div>
+
+            {activeSection === "guide" ? (
+              <RegionSection
+                title="使用说明"
+                description="查看使用说明文字介绍。"
+              >
+                <div className="dashboard-layout">
+                  <section id="guide" className="dashboard-block dashboard-block--wide fade-up scroll-mt-28" style={{ "--delay": "140ms" }}>
+                    <div className="p-4 pt-4 md:p-6 md:pt-6">
+                      <article className="guide-doc-shell">
+                          <nav className="guide-doc-breadcrumb" aria-label="使用说明路径">
+                            <span className="guide-doc-crumb">Documentation</span>
+                            <ChevronRight className="guide-doc-crumb-sep" />
+                            <span className="guide-doc-crumb">自动打卡控制台</span>
+                            <ChevronRight className="guide-doc-crumb-sep" />
+                            <span className="guide-doc-crumb guide-doc-crumb--current">使用说明</span>
+                          </nav>
+
+                          <header className="guide-doc-header">
+                            <h1 className="guide-doc-title">自动打卡控制台使用说明</h1>
+                            <div className="guide-doc-title-rule" aria-hidden="true" />
+                            <p className="guide-doc-lead">
+                              本页用于快速完成日常操作和异常排查。建议按固定顺序执行，减少误操作和重复排查时间。
+                            </p>
+                          </header>
+
+                          <section className="guide-doc-section" aria-labelledby="guide-quick-start">
+                            <h2 id="guide-quick-start" className="guide-doc-h2">快速开始</h2>
+                            <ol className="guide-doc-steps">
+                              <li>进入“任务配置”，先核对设备、应用包名、上午窗口和下午窗口时间。</li>
+                              <li>依次执行“一键自检 → 刷新设备状态 → 试运行”，确认链路可用。</li>
+                              <li>确认无阻断项后再“启动任务”，避免直接上线导致漏打卡。</li>
+                            </ol>
+                          </section>
+
+                          <section className="guide-doc-section" aria-labelledby="guide-modules">
+                            <h2 id="guide-modules" className="guide-doc-h2">模块联动说明</h2>
+                            <ul className="guide-doc-list">
+                              <li>
+                                <strong>监控总览：</strong>
+                                查看当前状态、关键指标和风险提示，适合作为第一观察入口。
+                              </li>
+                              <li>
+                                <strong>任务配置：</strong>
+                                维护设备参数、窗口时间和辅助开关，修改后需手动保存。
+                              </li>
+                              <li>
+                                <strong>打卡记录：</strong>
+                                核对每次执行结果和时间线，用于还原当天实际动作。
+                              </li>
+                              <li>
+                                <strong>告警日志：</strong>
+                                优先定位错误原因，适用于失败重试前的快速诊断。
+                              </li>
+                              <li>
+                                <strong>使用说明：</strong>
+                                本模块独立显示说明内容，不参与右侧业务模块联动。
+                              </li>
+                            </ul>
+                          </section>
+
+                          <section className="guide-doc-section" aria-labelledby="guide-scenarios">
+                            <h2 id="guide-scenarios" className="guide-doc-h2">高频场景</h2>
+                            <div className="guide-doc-grid">
+                              <article className="guide-doc-note-card">
+                                <h3>首次接入</h3>
+                                <p>先完成参数配置，再做一次试运行，确认日志和记录都正常后再启动任务。</p>
+                              </article>
+                              <article className="guide-doc-note-card">
+                                <h3>日常巡检</h3>
+                                <p>优先查看监控总览和下一次计划，如需调整窗口，保存后立即复查状态。</p>
+                              </article>
+                              <article className="guide-doc-note-card">
+                                <h3>异常恢复</h3>
+                                <p>先看告警日志，再看打卡记录与时间线，修复后重新执行自检和试运行。</p>
+                              </article>
+                            </div>
+                          </section>
+
+                          <section className="guide-doc-section" aria-labelledby="guide-troubleshooting">
+                            <h2 id="guide-troubleshooting" className="guide-doc-h2">异常排查顺序</h2>
+                            <ol className="guide-doc-steps">
+                              <li>确认设备连接和 ADB 授权状态是否正常。</li>
+                              <li>检查工作日接口和轮询超时参数是否可用。</li>
+                              <li>核对上午/下午窗口时间范围与随机时间是否合理。</li>
+                              <li>在告警日志中定位错误，再到打卡记录验证影响范围。</li>
+                              <li>问题修复后执行“一键自检”和“试运行”确认恢复。</li>
+                            </ol>
+                          </section>
+                        </article>
+                    </div>
+                  </section>
+                </div>
+              </RegionSection>
+            ) : null}
           </section>
         </main>
 
-        <BottomStickyMenu
-          activeSection={activeSection}
-          pendingAction={pendingAction}
-          hasBlockingIssues={hasBlockingIssues}
-          blockingCount={validationIssues.length}
-          onAction={handleAction}
-        />
+        {activeSection !== "guide" ? (
+          <BottomStickyMenu
+            activeSection={activeSection}
+            pendingAction={pendingAction}
+            hasBlockingIssues={hasBlockingIssues}
+            blockingCount={validationIssues.length}
+            onAction={handleAction}
+          />
+        ) : null}
       </div>
     </div>
   );
@@ -2315,47 +2449,70 @@ function LogoRegion({ collapsed, onToggleCollapse }) {
 }
 
 function SidebarNav({ collapsed, activeSection, onNavClick }) {
+  const guideNavItem = navItems.find((item) => item.id === "guide");
+  const primaryNavItems = navItems.filter((item) => item.id !== "guide");
+
+  const renderNavItem = (item, className = "") => {
+    const Icon = item.icon;
+    const isGuideItem = item.id === "guide";
+    return (
+      <a
+        key={item.id}
+        href={`#${item.id}`}
+        data-sidebar-item="true"
+        data-sidebar-icon-animate={isGuideItem ? "false" : "true"}
+        data-guide-item={isGuideItem ? "true" : "false"}
+        data-guide-active={isGuideItem && activeSection === item.id ? "true" : "false"}
+        data-sidebar-cursor-block="true"
+        title={item.label}
+        aria-label={item.label}
+        className={cn(
+          "flex h-10 w-full items-center gap-2 overflow-hidden rounded-md border px-2 text-sm leading-6 transition-[width,padding,gap,background-color,color,border-color] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]",
+          collapsed && "lg:h-10 lg:w-[var(--sidebar-inner-size)] lg:justify-center lg:px-0 lg:gap-0",
+          isGuideItem
+            ? activeSection === item.id
+              ? "border-transparent bg-transparent text-black dark:text-white hover:border-transparent hover:bg-transparent hover:text-black dark:hover:text-white"
+              : "border-transparent text-muted-foreground hover:border-transparent hover:bg-transparent"
+            : activeSection === item.id
+              ? "border-border bg-accent text-accent-foreground"
+              : "border-transparent text-muted-foreground hover:border-border hover:bg-accent hover:text-accent-foreground",
+          className,
+        )}
+        onClick={(event) => onNavClick(event, item.id)}
+      >
+        <Icon className="size-4.5 shrink-0" data-guide-hotspot={isGuideItem ? "true" : undefined} />
+        <span
+          data-guide-hotspot={isGuideItem ? "true" : undefined}
+          className={cn(
+            "font-medium whitespace-nowrap transition-[max-width,opacity,transform] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]",
+            collapsed
+              ? "lg:pointer-events-none lg:absolute lg:max-w-0 lg:opacity-0 lg:-translate-x-1"
+              : "lg:max-w-[11rem] lg:opacity-100 lg:translate-x-0",
+          )}
+        >
+          {item.label}
+        </span>
+      </a>
+    );
+  };
+
   return (
     <nav
       className={cn(
-        "fade-up space-y-4",
-        collapsed && "lg:flex lg:flex-col lg:items-center",
+        "fade-up flex h-full min-h-0 flex-col",
+        collapsed && "lg:items-center",
       )}
       style={{ "--delay": "100ms" }}
     >
-      {navItems.map((item) => {
-        const Icon = item.icon;
-        return (
-          <a
-            key={item.id}
-            href={`#${item.id}`}
-            data-sidebar-item="true"
-            data-sidebar-cursor-block="true"
-            title={item.label}
-            aria-label={item.label}
-            className={cn(
-              "flex h-10 w-full items-center gap-2 overflow-hidden rounded-md border px-2 text-sm leading-6 transition-[width,padding,gap,background-color,color,border-color] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]",
-              collapsed && "lg:h-10 lg:w-[var(--sidebar-inner-size)] lg:justify-center lg:px-0 lg:gap-0",
-              activeSection === item.id
-                ? "border-border bg-accent text-accent-foreground"
-                : "border-transparent text-muted-foreground hover:border-border hover:bg-accent hover:text-accent-foreground",
-            )}
-            onClick={(event) => onNavClick(event, item.id)}
-          >
-            <Icon className="size-4.5 shrink-0" />
-            <span
-              className={cn(
-                "font-medium whitespace-nowrap transition-[max-width,opacity,transform] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]",
-                collapsed
-                  ? "lg:pointer-events-none lg:absolute lg:max-w-0 lg:opacity-0 lg:-translate-x-1"
-                  : "lg:max-w-[11rem] lg:opacity-100 lg:translate-x-0",
-              )}
-            >
-              {item.label}
-            </span>
-          </a>
-        );
-      })}
+      <div className={cn("space-y-4", collapsed && "lg:flex lg:w-full lg:flex-col lg:items-center")}>
+        {primaryNavItems.map((item) => renderNavItem(item))}
+      </div>
+
+      {guideNavItem ? (
+        <div className={cn("mt-auto w-full border-t border-border/70 pt-4", collapsed && "lg:flex lg:justify-center")}>
+          {renderNavItem(guideNavItem)}
+        </div>
+      ) : null}
     </nav>
   );
 }
@@ -2382,6 +2539,8 @@ function RegionSection({ title, description, children }) {
       ? "overview"
       : title === "任务配置与排期管理"
         ? "config"
+        : title === "使用说明"
+          ? "config"
         : title === "打卡记录"
           ? "records"
           : title === "告警日志与通知中心"
@@ -2540,10 +2699,10 @@ function TopbarRegion({ title, tone, theme, sidebarCollapsed, onToggleTheme }) {
 
   return (
     <>
-      <div className="hidden h-[3.75rem] lg:block" aria-hidden="true" />
+      <div className="hidden h-12 lg:block" aria-hidden="true" />
       <section
         ref={topbarRef}
-        className="topbar-region topbar-region--fixed sticky top-0 z-[30] -mx-3 bg-background/70 px-3 py-1 backdrop-blur sm:-mx-4 sm:px-4 lg:mx-0 lg:px-4"
+        className="topbar-region topbar-region--fixed sticky top-0 z-[30] -mx-3 bg-background/70 px-3 py-0 backdrop-blur sm:-mx-4 sm:px-4 lg:mx-0 lg:px-4"
         style={{
           "--topbar-sidebar-animated-width": sidebarCollapsed
             ? "var(--sidebar-collapsed-width)"
