@@ -421,11 +421,13 @@
     .topbar-region--fixed {
       position: fixed;
       top: 1rem;
-      left: max(
-        calc(var(--topbar-sidebar-animated-width, var(--sidebar-expanded-width)) + var(--topbar-inline-inset, 0px)),
-        calc((100vw - 1600px) / 2 + var(--topbar-sidebar-animated-width, var(--sidebar-expanded-width)) + var(--topbar-inline-inset, 0px))
+      --topbar-frame-border-width: 1px;
+      left: calc(
+        var(--topbar-sidebar-animated-width, var(--sidebar-expanded-width)) +
+        var(--topbar-inline-inset, 0px) +
+        var(--topbar-frame-border-width)
       );
-      right: max(var(--topbar-inline-inset, 0px), calc((100vw - 1600px) / 2 + var(--topbar-inline-inset, 0px)));
+      right: calc(var(--topbar-inline-inset, 0px) + var(--topbar-frame-border-width));
       z-index: 60;
       will-change: left, right;
     }

@@ -1379,7 +1379,7 @@ function App() {
 
         <div
           className={cn(
-          "mx-auto min-h-screen max-w-[1600px] transition-none lg:grid lg:transition-[grid-template-columns] lg:duration-500 lg:ease-[cubic-bezier(0.22,1,0.36,1)]",
+          "mx-auto min-h-screen transition-none lg:grid lg:transition-[grid-template-columns] lg:duration-500 lg:ease-[cubic-bezier(0.22,1,0.36,1)]",
           sidebarCollapsed
             ? "lg:grid-cols-[var(--sidebar-collapsed-width)_minmax(0,1fr)]"
             : "lg:grid-cols-[var(--sidebar-expanded-width)_minmax(0,1fr)]",
