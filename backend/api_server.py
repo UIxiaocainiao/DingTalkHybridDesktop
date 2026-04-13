@@ -834,11 +834,23 @@ def run_once() -> dict[str, Any]:
     config = load_console_config()
     apply_console_windows(config)
     args = build_namespace(config, command="run")
+    scrcpy_note = ""
 
     try:
         scheduler.ADB_BIN = scheduler.resolve_binary("adb", args.adb_bin, scheduler.ADB_CANDIDATES)
         serial = args.serial or scheduler.detect_single_device()
         status = scheduler.get_device_status(serial)
+        if config.get("enable_scrcpy_watch"):
+            try:
+                scrcpy_bin = scheduler.resolve_binary("scrcpy", args.scrcpy_bin, scheduler.SCRCPY_CANDIDATES)
+                scheduler.SCRCPY_BIN = scrcpy_bin
+                if scheduler.is_scrcpy_running_for_serial(serial):
+                    scrcpy_note = "scrcpy 已在运行。"
+                else:
+                    scheduler.launch_scrcpy(serial)
+                    scrcpy_note = "scrcpy 已拉起。"
+            except Exception as exc:
+                scrcpy_note = f"scrcpy 未启动: {exc}"
     except subprocess.CalledProcessError as exc:
         raise ApiError(400, scheduler.describe_process_error(exc)) from exc
     except Exception as exc:
@@ -877,7 +889,7 @@ def run_once() -> dict[str, Any]:
 
     return {
         "message": "试运行已完成",
-        "detail": f"设备 {serial} 已执行一次手动动作链路。",
+        "detail": " ".join(filter(None, [f"设备 {serial} 已执行一次手动动作链路。", scrcpy_note])),
     }
 
 
