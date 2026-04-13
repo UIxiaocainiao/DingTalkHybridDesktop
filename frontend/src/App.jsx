@@ -86,6 +86,12 @@ const configGroups = [
         defaultValue: "",
         helper: "用于绑定具体 ADB 设备；留空时会自动选择唯一在线设备。",
       },
+      {
+        label: "ADB 路径 adb_bin",
+        key: "adb_bin",
+        defaultValue: "",
+        helper: "留空时优先使用内置 platform-tools/adb，再回退到系统 PATH；电脑未安装 adb 时建议先运行安装脚本。",
+      },
       { label: "应用包名 package", key: "package", defaultValue: "com.alibaba.android.rimet" },
       { label: "应用名称 app_label", key: "app_label", defaultValue: "钉钉" },
       {
@@ -431,6 +437,17 @@ function getWindowFromDashboard(dashboard, name) {
   return dashboard?.windows?.find((item) => item.name === name);
 }
 
+function formatDeviceConnectionNote(deviceState) {
+  if (!deviceState) return "等待设备连接或授权。";
+  if (!deviceState.adbAvailable) {
+    return `ADB 未就绪：${deviceState.adbInstallHint ?? "先安装 platform-tools/adb"}`;
+  }
+
+  const adbSource = deviceState.adbSource ? `ADB ${deviceState.adbSource}` : "ADB 已找到";
+  const serial = deviceState.serial ? `serial: ${deviceState.serial}` : "等待设备连接或授权";
+  return `${serial} / ${adbSource}`;
+}
+
 function App() {
   const [theme, setTheme] = useState(() => {
     const saved =
@@ -622,7 +639,8 @@ function App() {
     const workdayState = dashboard?.workday;
     let deviceLabel = "待处理";
 
-    if (deviceState?.ready) deviceLabel = "已连接";
+    if (deviceState && !deviceState.adbAvailable) deviceLabel = "ADB 未就绪";
+    else if (deviceState?.ready) deviceLabel = "已连接";
     else if (deviceState?.error) deviceLabel = "异常";
     else if (/unauthorized/i.test(deviceState?.summary ?? "")) deviceLabel = "未授权";
 
@@ -636,10 +654,7 @@ function App() {
       {
         label: "设备状态",
         value: deviceLabel,
-        note:
-          deviceState?.serial
-            ? `serial: ${deviceState.serial}`
-            : deviceState?.error || "等待设备连接或授权。",
+        note: deviceState?.error || formatDeviceConnectionNote(deviceState),
         icon: Smartphone,
       },
       {
@@ -672,6 +687,14 @@ function App() {
           ? `异常 / ${dashboard.device.error}`
           : `${dashboard?.device?.summary ?? "待处理"}${dashboard?.device?.serial ? ` / ${dashboard.device.serial}` : ""}`,
         true,
+      ],
+      [
+        "ADB 连接器",
+        !dashboard?.device
+          ? "待后端返回"
+          : dashboard.device.adbAvailable
+            ? `${dashboard.device.adbSource ?? "已找到"} / ${dashboard.device.adbBin ?? "adb"}`
+            : `未安装 / ${dashboard.device.adbInstallHint ?? "运行 platform-tools 安装脚本"}`,
       ],
       [
         "scrcpy 前台观察",

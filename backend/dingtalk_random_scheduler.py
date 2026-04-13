@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import platform
 import random
 import re
 import shlex
@@ -36,6 +37,10 @@ DEFAULT_DELAY_AFTER_LAUNCH = 5
 DEFAULT_POLL_INTERVAL = 5
 DEFAULT_SCRCPY_LAUNCH_COOLDOWN = 15
 BASE_DIR = Path(__file__).resolve().parent
+DEFAULT_PLATFORM_TOOLS_DIR = BASE_DIR / "vendor/platform-tools"
+PLATFORM_TOOLS_DIR = Path(
+    os.environ.get("DINGTALK_PLATFORM_TOOLS_DIR", str(DEFAULT_PLATFORM_TOOLS_DIR))
+).expanduser()
 DEFAULT_STATE_FILE = str(BASE_DIR / "logs/dingtalk-random-scheduler.state.json")
 DEFAULT_CONFIG_FILE = str(BASE_DIR / "runtime/console-config.json")
 DEFAULT_WORKDAY_API_URL = "https://holiday.dreace.top?date={date}"
@@ -43,13 +48,50 @@ DEFAULT_WORKDAY_API_TIMEOUT = 5.0
 OSASCRIPT_BIN = "/usr/bin/osascript"
 ADB_BIN = "adb"
 SCRCPY_BIN = "scrcpy"
+
+
+def host_platform_key() -> str:
+    system = sys.platform
+    if system == "darwin":
+        os_name = "darwin"
+    elif system.startswith("linux"):
+        os_name = "linux"
+    elif system.startswith(("win32", "cygwin", "msys")):
+        os_name = "windows"
+    else:
+        os_name = system
+
+    machine = platform.machine().lower()
+    if machine in {"arm64", "aarch64"}:
+        arch = "arm64"
+    elif machine in {"x86_64", "amd64"}:
+        arch = "x64"
+    else:
+        arch = machine or "unknown"
+    return f"{os_name}-{arch}"
+
+
+def bundled_binary_candidates(binary_name: str) -> tuple[str, ...]:
+    executable_name = f"{binary_name}.exe" if os.name == "nt" else binary_name
+    platform_key = host_platform_key()
+    return (
+        str(PLATFORM_TOOLS_DIR / platform_key / "platform-tools" / executable_name),
+        str(PLATFORM_TOOLS_DIR / platform_key / executable_name),
+        str(PLATFORM_TOOLS_DIR / "platform-tools" / executable_name),
+        str(PLATFORM_TOOLS_DIR / executable_name),
+    )
+
+
 ADB_CANDIDATES = (
+    os.environ.get("DINGTALK_ADB_BIN", ""),
+    *bundled_binary_candidates("adb"),
     "adb",
     "/opt/homebrew/bin/adb",
     "/usr/local/bin/adb",
     "/usr/bin/adb",
 )
 SCRCPY_CANDIDATES = (
+    os.environ.get("DINGTALK_SCRCPY_BIN", ""),
     "scrcpy",
     "/opt/homebrew/bin/scrcpy",
     "/usr/local/bin/scrcpy",
@@ -181,21 +223,66 @@ def format_window(window: TimeWindow) -> str:
     return f"{window.start.strftime('%H:%M')}-{window.end.strftime('%H:%M')}"
 
 
+def is_executable_file(path: Path) -> bool:
+    if not path.is_file():
+        return False
+    if os.name == "nt":
+        return True
+    return os.access(path, os.X_OK)
+
+
+def resolve_binary_candidate(candidate: str) -> str | None:
+    expanded = os.path.expandvars(os.path.expanduser(candidate.strip()))
+    if not expanded:
+        return None
+
+    if "/" in expanded or "\\" in expanded:
+        path = Path(expanded)
+        return str(path) if is_executable_file(path) else None
+
+    return shutil.which(expanded)
+
+
 def resolve_binary(binary_name: str, configured_path: str | None, candidates: tuple[str, ...]) -> str:
     if configured_path:
-        return configured_path
+        resolved = resolve_binary_candidate(configured_path)
+        if resolved:
+            return resolved
+        raise RuntimeError(f"{binary_name} configured at {configured_path}, but it is not executable.")
 
     for candidate in candidates:
-        if "/" in candidate:
-            resolved = candidate if shutil.which(candidate) else None
-        else:
-            resolved = shutil.which(candidate)
+        resolved = resolve_binary_candidate(candidate)
         if resolved:
             return resolved
 
     raise RuntimeError(
-        f"{binary_name} not found. Install it first or pass the explicit path."
+        f"{binary_name} not found. Run scripts/install_platform_tools.py or pass the explicit path."
     )
+
+
+def is_under(path: Path, parent: Path) -> bool:
+    try:
+        path.resolve().relative_to(parent.resolve())
+        return True
+    except ValueError:
+        return False
+
+
+def describe_binary_source(binary_path: str | None, configured_path: str | None = None) -> str:
+    if not binary_path:
+        return "missing"
+
+    path = Path(binary_path).expanduser()
+    if configured_path:
+        return "front-end config"
+    if is_under(path, PLATFORM_TOOLS_DIR):
+        return f"bundled platform-tools ({host_platform_key()})"
+
+    env_path = os.environ.get("DINGTALK_ADB_BIN") or os.environ.get("DINGTALK_SCRCPY_BIN")
+    if env_path and Path(env_path).expanduser() == path:
+        return "environment"
+
+    return "system PATH"
 
 
 def run_adb(adb_bin: str, serial: str | None, args: Iterable[str]) -> subprocess.CompletedProcess[str]:
@@ -1061,6 +1148,8 @@ def command_status(args: argparse.Namespace) -> int:
     if not adb_bin:
         return 0
 
+    print(f"ADB: {adb_bin} ({describe_binary_source(adb_bin, args.adb_bin)})")
+
     global ADB_BIN, SCRCPY_BIN
     ADB_BIN = adb_bin
     if scrcpy_bin:
@@ -1094,11 +1183,11 @@ def command_doctor(args: argparse.Namespace) -> int:
 
     adb_bin, scrcpy_bin, binary_warnings = resolve_binaries_for_inspection(args)
     if adb_bin:
-        print(f"OK   adb: {adb_bin}")
+        print(f"OK   adb: {adb_bin} ({describe_binary_source(adb_bin, args.adb_bin)})")
     else:
-        issues.append("adb is required for scheduling and device checks.")
+        issues.append("adb is required for scheduling and device checks. Run scripts/install_platform_tools.py.")
     if scrcpy_bin:
-        print(f"OK   scrcpy: {scrcpy_bin}")
+        print(f"OK   scrcpy: {scrcpy_bin} ({describe_binary_source(scrcpy_bin, args.scrcpy_bin)})")
     else:
         if scrcpy_required:
             issues.append("scrcpy is required while scrcpy watch is enabled.")

@@ -218,4 +218,5 @@ ops_qiniu_ticket_www_dingtalk.md
 backend/logs/*.log
 backend/logs/*.json
 backend/runtime/console-config.json
+backend/vendor/platform-tools/
 *.DS_Store

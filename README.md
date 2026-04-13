@@ -25,7 +25,7 @@
 ### 1) 环境准备
 
 - Python 3.11+
-- ADB 可用（`adb version`）
+- ADB 可用（`adb version`），或运行内置安装脚本：`python3 scripts/install_platform_tools.py`
 - Android 设备已开启 USB 调试并授权（`adb devices`）
 
 ### 2) 先做环境自检
@@ -75,9 +75,30 @@ python3 backend/dingtalk_random_scheduler.py set-next --window evening --time 18
 python3 backend/api_server.py
 ```
 
+## 内置 platform-tools / ADB
+
+后端会按以下优先级查找 ADB：
+
+1. 前台保存的 `adb_bin` 或命令行 `--adb-bin`
+2. 环境变量 `DINGTALK_ADB_BIN`
+3. 项目内置目录 `backend/vendor/platform-tools/<platform>/platform-tools/adb`
+4. 系统 PATH 和常见安装路径（例如 `/opt/homebrew/bin/adb`）
+
+如果电脑没有安装 ADB，可执行：
+
+```bash
+python3 scripts/install_platform_tools.py
+python3 backend/dingtalk_random_scheduler.py doctor
+```
+
+脚本会下载官方 Android platform-tools 到 `backend/vendor/platform-tools/`。该目录不会提交到 GitHub；生产云端仍需要本机设备连接器才能访问 USB/ADB 设备。
+
 ## 常用参数
 
 ```bash
+# 指定 adb 路径，也可在前台控制台保存
+--adb-bin /absolute/path/to/platform-tools/adb
+
 # 开启 scrcpy 重连观察
 --enable-scrcpy-watch
 

@@ -375,11 +375,14 @@ def resolve_device_snapshot(config: dict[str, Any]) -> dict[str, Any]:
             selected_serial = selected_serial or scheduler.detect_single_device()
             status = scheduler.get_device_status(selected_serial)
         except subprocess.CalledProcessError as exc:
-            error = scheduler.describe_process_error(exc)
+            error = summarize_adb_connection_error(scheduler.describe_process_error(exc))
         except Exception as exc:
-            error = str(exc)
+            error = summarize_adb_connection_error(str(exc))
     else:
-        error = "adb 不可用"
+        error = (
+            "设备连接器缺少 adb：请运行 python3 scripts/install_platform_tools.py，"
+            "或在前台配置 adb_bin 为 platform-tools/adb 的绝对路径。"
+        )
 
     scrcpy_running = False
     if scrcpy_bin and selected_serial:
@@ -397,9 +400,39 @@ def resolve_device_snapshot(config: dict[str, Any]) -> dict[str, Any]:
         "rawLine": status.raw_line if status else "",
         "warningMessages": warnings,
         "error": error,
+        "adbAvailable": bool(adb_bin),
+        "adbBin": adb_bin or "",
+        "adbSource": scheduler.describe_binary_source(adb_bin, config["adb_bin"] or None),
+        "adbInstallHint": "python3 scripts/install_platform_tools.py",
         "scrcpyAvailable": bool(scrcpy_bin),
+        "scrcpyBin": scrcpy_bin or "",
+        "scrcpySource": scheduler.describe_binary_source(scrcpy_bin, config["scrcpy_bin"] or None),
         "scrcpyRunning": scrcpy_running,
     }
+
+
+def summarize_adb_connection_error(message: str) -> str:
+    normalized = " ".join(message.strip().split())
+    lowered = normalized.lower()
+
+    if "not found" in lowered or "not executable" in lowered:
+        return (
+            "ADB 未安装或路径不可执行：请运行 python3 scripts/install_platform_tools.py，"
+            "或在前台配置 adb_bin。"
+        )
+    if "could not install *smartsocket* listener" in lowered or "cannot connect to daemon" in lowered:
+        return (
+            "ADB 服务启动失败：请确认当前是在本机设备连接器环境运行、5037 端口未被异常占用，"
+            "并允许 adb 启动本地 daemon。"
+        )
+    if "unauthorized" in lowered:
+        return "设备已连接但未授权：请在手机上确认 USB 调试授权。"
+    if "no devices" in lowered:
+        return "未发现在线设备：请确认 USB 已连接、已开启 USB 调试，并重新刷新设备状态。"
+    if "offline" in lowered:
+        return "设备处于 offline：请重新插拔 USB，或在手机上重新授权 USB 调试。"
+
+    return normalized[:500] if normalized else "ADB 连接异常"
 
 
 def derive_last_success(state: scheduler.SchedulerState) -> dict[str, str]:
@@ -560,7 +593,10 @@ def build_status_tags(
     tags = [f"任务 {process_state['label']}"]
     if device["serial"]:
         tags.append(f"设备 {device['serial']}")
-    tags.append("ADB 已授权" if device["ready"] else "ADB 待处理")
+    if not device.get("adbAvailable"):
+        tags.append("ADB 未安装")
+    else:
+        tags.append("ADB 已授权" if device["ready"] else "ADB 待处理")
     if workday.get("enabled") and workday.get("isWorkday") is not None:
         tags.append("今天是工作日" if workday["isWorkday"] else "今天非工作日")
     if device["scrcpyRunning"]:
@@ -585,7 +621,7 @@ def build_alerts(
     if device["error"]:
         alerts.append(
             {
-                "title": "设备状态异常",
+                "title": "设备连接器异常" if not device.get("adbAvailable") else "设备状态异常",
                 "detail": device["error"],
             }
         )
