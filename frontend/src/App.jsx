@@ -119,6 +119,29 @@ const configGroups = [
       { label: "接口超时时间", key: "workday_api_timeout_ms", defaultValue: "5000 ms" },
     ],
   },
+  {
+    title: "scrcpy 前台配置",
+    eyebrow: "Mirror",
+    summary: "观察能力只由前台开关和参数控制",
+    icon: Bug,
+    badgeClass:
+      "border-amber-500/20 bg-amber-500/10 text-amber-700 dark:text-amber-300",
+    description: "设备端只做连接，是否拉起 scrcpy 完全取决于这里的保存配置。",
+    fields: [
+      {
+        label: "scrcpy 路径 scrcpy_bin",
+        key: "scrcpy_bin",
+        defaultValue: "",
+        helper: "留空时后端自动查找 scrcpy；填写后会使用该路径启动前台观察窗口。",
+      },
+      {
+        label: "scrcpy 重连冷却",
+        key: "scrcpy_launch_cooldown",
+        defaultValue: "15 秒",
+        helper: "设备断开后再次连上时，至少间隔这么久才允许再次拉起 scrcpy。",
+      },
+    ],
+  },
 ];
 
 const unifiedWindowAccentClass =
@@ -194,7 +217,7 @@ const actions = [
     style: "secondary",
     icon: Bug,
     group: "runtime",
-    note: "以 debug 模式启动，便于观察运行状态。",
+    note: "以当前前台配置启动调试进程，不再隐式开启 scrcpy。",
   },
   {
     label: "查看排期",
@@ -209,8 +232,8 @@ const toggleDefinitions = [
   {
     label: "scrcpy 观察模式",
     key: "enable_scrcpy_watch",
-    enabledNote: "设备重新连接后，会尝试自动拉起 scrcpy。",
-    disabledNote: "只保留调度行为，不自动拉起 scrcpy。",
+    enabledNote: "按前台配置的路径和冷却时间，在设备重新连接后自动拉起 scrcpy。",
+    disabledNote: "设备端只保持 ADB 连接，不自动拉起 scrcpy。",
   },
   {
     label: "成功通知",
@@ -328,6 +351,7 @@ function buildConfigStateFromDashboard(dashboard) {
         let value = config[field.key];
         if (field.key === "delay_after_launch") value = `${value} 秒`;
         if (field.key === "poll_interval") value = `${value} 秒`;
+        if (field.key === "scrcpy_launch_cooldown") value = `${value} 秒`;
         if (field.key === "workday_api_timeout_ms") value = `${value} ms`;
         return [field.label, String(value ?? field.defaultValue ?? "")];
       }),
@@ -364,7 +388,12 @@ function buildConfigPayload(configValues, windowValues, toggleValues, baseConfig
   };
   Object.entries(CONFIG_FIELD_MAP).forEach(([label, key]) => {
     const rawValue = String(configValues[label] ?? "").trim();
-    if (key === "delay_after_launch" || key === "poll_interval" || key === "workday_api_timeout_ms") {
+    if (
+      key === "delay_after_launch" ||
+      key === "poll_interval" ||
+      key === "scrcpy_launch_cooldown" ||
+      key === "workday_api_timeout_ms"
+    ) {
       payload[key] = parseNumber(rawValue) ?? 0;
       return;
     }
@@ -644,6 +673,14 @@ function App() {
           : `${dashboard?.device?.summary ?? "待处理"}${dashboard?.device?.serial ? ` / ${dashboard.device.serial}` : ""}`,
         true,
       ],
+      [
+        "scrcpy 前台观察",
+        toggleValues["scrcpy 观察模式"]
+          ? dashboard?.device?.scrcpyAvailable
+            ? `已启用 / ${dashboard?.device?.scrcpyRunning ? "运行中" : "待拉起"}`
+            : "已启用 / scrcpy 不可用"
+          : "已关闭 / 仅保持设备连接",
+      ],
       ["上午下一次执行时间", morningWindow?.selectedAt ?? windowValues["上午窗口-selected"]],
       ["下午下一次执行时间", eveningWindow?.selectedAt ?? windowValues["下午窗口-selected"]],
       ["最近一次成功执行时间", dashboard?.lastSuccess?.label ?? "暂无执行记录"],
@@ -656,7 +693,7 @@ function App() {
             : `${workdayState?.checkedDate ?? "待校验"} / ${workdayState?.note ?? "待返回"}`,
       ],
     ];
-  }, [dashboard, windowValues]);
+  }, [dashboard, toggleValues, windowValues]);
 
   const statusTags = dashboard?.statusTags ?? ["等待后端状态"];
   const toggles = dashboard?.toggles ?? [];
@@ -691,6 +728,11 @@ function App() {
     const pollInterval = parseNumber(configValues["轮询间隔 poll_interval"]);
     if (pollInterval === null || pollInterval < 1) {
       add("轮询间隔 poll_interval", "轮询间隔至少为 1 秒。");
+    }
+
+    const scrcpyCooldown = parseNumber(configValues["scrcpy 重连冷却"]);
+    if (scrcpyCooldown === null || scrcpyCooldown < 1) {
+      add("scrcpy 重连冷却", "scrcpy 重连冷却至少为 1 秒。");
     }
 
     const timeout = parseNumber(configValues["接口超时时间"]);
@@ -1839,12 +1881,12 @@ function App() {
                     <CardHeader className="flex flex-col gap-4 border-b sm:flex-row sm:items-center sm:justify-between">
                       <div className="space-y-2">
                         <CardTitle>基础参数</CardTitle>
-                        <CardDescription>低频参数集中放在这里。</CardDescription>
+                        <CardDescription>设备连接、调度节奏和 scrcpy 观察能力都从前台配置。</CardDescription>
                       </div>
                     </CardHeader>
                     <CardContent className="region-card-content space-y-5 pt-5">
                       <SectionState {...configStatus} />
-                      <div className="grid items-stretch gap-4 lg:grid-cols-2">
+                      <div className="grid items-stretch gap-4 lg:grid-cols-2 xl:grid-cols-3">
                         {configGroups.map((group) => (
                           <Card key={group.title} className="flex h-full flex-col bg-muted/20">
                             <CardHeader className="min-h-[96px]">

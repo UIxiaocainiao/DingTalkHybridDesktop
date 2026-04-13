@@ -5,7 +5,7 @@ Features:
 1. Schedules DingTalk launches in randomized morning and evening windows
 2. Persists the next planned run times so restarts do not reshuffle the day
 3. Exposes `run`, `debug`, `status`, `schedule`, and `doctor` commands
-4. Keeps scrcpy as an opt-in debug tool instead of a production dependency
+4. Keeps scrcpy behind explicit config instead of a production dependency
 5. Cleans up MIUI recent-task cards after the app is force-stopped
 """
 
@@ -975,7 +975,7 @@ def print_schedule_report(state: SchedulerState, state_file: Path) -> None:
 
 
 def should_enable_scrcpy_watch(args: argparse.Namespace) -> bool:
-    return args.command == "debug" or args.enable_scrcpy_watch
+    return args.enable_scrcpy_watch
 
 
 def resolve_binaries_for_run(args: argparse.Namespace) -> tuple[str, str | None]:
@@ -1101,7 +1101,7 @@ def command_doctor(args: argparse.Namespace) -> int:
         print(f"OK   scrcpy: {scrcpy_bin}")
     else:
         if scrcpy_required:
-            issues.append("scrcpy is required while debug mode or scrcpy watch is enabled.")
+            issues.append("scrcpy is required while scrcpy watch is enabled.")
         else:
             print("WARN scrcpy: unavailable, but production mode only needs adb.")
 
@@ -1283,14 +1283,14 @@ def command_run(args: argparse.Namespace) -> int:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Persistent DingTalk scheduler and scrcpy reconnect manager for one Android device."
+        description="Persistent DingTalk scheduler for one Android device; scrcpy is controlled only by explicit config."
     )
     parser.add_argument(
         "command",
         nargs="?",
         choices=("run", "debug", "status", "schedule", "doctor", "set-next"),
         default="run",
-        help="run the scheduler, start debug mode with scrcpy, inspect status/schedule, update the next run, or run diagnostics",
+        help="run the scheduler, start debug mode, inspect status/schedule, update the next run, or run diagnostics",
     )
     parser.add_argument(
         "--window",
@@ -1332,7 +1332,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--enable-scrcpy-watch",
         action="store_true",
-        help="Enable automatic scrcpy relaunch on reconnect during run mode.",
+        help="Enable automatic scrcpy relaunch on reconnect. Debug mode does not enable it implicitly.",
     )
     parser.add_argument(
         "--poll-interval",
