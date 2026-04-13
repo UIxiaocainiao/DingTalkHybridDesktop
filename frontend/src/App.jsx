@@ -509,11 +509,7 @@ function App() {
   const [recordFilter, setRecordFilter] = useState({ date: "", type: "", status: "" });
   const [recordPage, setRecordPage] = useState(1);
   const [recordPageSize, setRecordPageSize] = useState(10);
-  const [wizardOpen, setWizardOpen] = useState(false);
-  const [wizardDismissed, setWizardDismissed] = useState(() => {
-    if (typeof window === "undefined") return false;
-    return window.localStorage.getItem("adb-wizard-dismissed") === "1";
-  });
+  const [activeGuidePanel, setActiveGuidePanel] = useState("desktop");
 
   const quickActionSet = useMemo(
     () =>
@@ -546,21 +542,6 @@ function App() {
       .catch(() => toast.error("复制失败，请手动复制"));
   }, []);
 
-  const openWizard = useCallback(() => {
-    setWizardOpen(true);
-    setWizardDismissed(false);
-    if (typeof window !== "undefined") {
-      window.localStorage.removeItem("adb-wizard-dismissed");
-    }
-  }, []);
-
-  const closeWizard = useCallback(() => {
-    setWizardOpen(false);
-    setWizardDismissed(true);
-    if (typeof window !== "undefined") {
-      window.localStorage.setItem("adb-wizard-dismissed", "1");
-    }
-  }, []);
 
   const dirtyCount = useMemo(() => {
     const configDirty = Object.keys(configValues).filter(
@@ -807,12 +788,6 @@ function App() {
     if (deviceState.error) return true;
     return false;
   }, [apiError, dashboardReady, deviceState]);
-
-  useEffect(() => {
-    if (needsConnectionGuide && !wizardDismissed) {
-      setWizardOpen(true);
-    }
-  }, [needsConnectionGuide, wizardDismissed]);
 
   const validation = useMemo(() => {
     const next = {};
@@ -1325,15 +1300,28 @@ function App() {
     target.scrollIntoView({ behavior: "smooth", block: "start" });
   }, []);
 
+  const openGuideSection = useCallback((anchorId = "guide") => {
+    setActiveSection("guide");
+    setTopbarTitle("使用说明");
+    setTopbarTone("config");
+
+    const hash = anchorId ? `#${anchorId}` : "#guide";
+    window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}${hash}`);
+
+    window.requestAnimationFrame(() => {
+      if (anchorId && document.getElementById(anchorId)) {
+        document.getElementById(anchorId)?.scrollIntoView({ behavior: "smooth", block: "start" });
+        return;
+      }
+      window.scrollTo({ top: 0, left: 0, behavior: "smooth" });
+    });
+  }, []);
+
   const handleNavClick = (event, id) => {
     setMobileNavOpen(false);
     if (id === "guide") {
       event.preventDefault();
-      setActiveSection("guide");
-      setTopbarTitle("使用说明");
-      setTopbarTone("config");
-      window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}#guide`);
-      window.scrollTo({ top: 0, left: 0, behavior: "smooth" });
+      openGuideSection("guide");
       return;
     }
 
@@ -1374,7 +1362,10 @@ function App() {
     if (!quickActionSet.has(label)) return;
 
     if (label === "连接向导") {
-      openWizard();
+      openGuideSection("guide-connection-wizard");
+      toast.success("已打开连接向导", {
+        description: "连接向导已移动到“使用说明”中的独立版块，方便随时学习和查看。",
+      });
       return;
     }
 
@@ -1711,13 +1702,6 @@ function App() {
       }}
     >
       <AdvancedCursor />
-      <ConnectionWizard
-        open={wizardOpen}
-        steps={wizardSteps}
-        activeStep={activeWizardStep}
-        onClose={closeWizard}
-        onRefresh={() => handleAction("刷新设备状态")}
-      />
       <div className="surface-grid pointer-events-none fixed inset-0 opacity-60 dark:opacity-40" />
 
       <div
@@ -2591,67 +2575,277 @@ function App() {
                             </p>
                           </header>
 
-                          <section className="guide-doc-section" aria-labelledby="guide-quick-start">
-                            <h2 id="guide-quick-start" className="guide-doc-h2">快速开始</h2>
-                            <ol className="guide-doc-steps">
-                              <li>进入“任务配置”，先核对设备、应用包名、上午窗口和下午窗口时间。</li>
-                              <li>依次执行“一键自检 → 刷新设备状态 → 试运行”，确认链路可用。</li>
-                              <li>确认无阻断项后再“启动任务”，避免直接上线导致漏打卡。</li>
-                            </ol>
-                          </section>
-
-                          <section className="guide-doc-section" aria-labelledby="guide-modules">
-                            <h2 id="guide-modules" className="guide-doc-h2">模块联动说明</h2>
-                            <ul className="guide-doc-list">
-                              <li>
-                                <strong>监控总览：</strong>
-                                查看当前状态、关键指标和风险提示，适合作为第一观察入口。
-                              </li>
-                              <li>
-                                <strong>任务配置：</strong>
-                                维护设备参数、窗口时间和辅助开关，修改后需手动保存。
-                              </li>
-                              <li>
-                                <strong>打卡记录：</strong>
-                                核对每次执行结果和时间线，用于还原当天实际动作。
-                              </li>
-                              <li>
-                                <strong>告警日志：</strong>
-                                优先定位错误原因，适用于失败重试前的快速诊断。
-                              </li>
-                              <li>
-                                <strong>使用说明：</strong>
-                                本模块独立显示说明内容，不参与右侧业务模块联动。
-                              </li>
-                            </ul>
-                          </section>
-
-                          <section className="guide-doc-section" aria-labelledby="guide-scenarios">
-                            <h2 id="guide-scenarios" className="guide-doc-h2">高频场景</h2>
+                          <section className="guide-doc-section" aria-labelledby="guide-reading-path">
+                            <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+                              <div>
+                                <div className="mb-2 flex flex-wrap items-center gap-2">
+                                  <Badge variant="outline" className="rounded-md">01</Badge>
+                                  <Badge variant="secondary" className="rounded-md">先看这里</Badge>
+                                </div>
+                                <h2 id="guide-reading-path" className="guide-doc-h2">建议阅读顺序</h2>
+                              </div>
+                              <p className="text-sm text-muted-foreground">阅读 30 秒，先建立正确操作顺序。</p>
+                            </div>
                             <div className="guide-doc-grid">
                               <article className="guide-doc-note-card">
-                                <h3>首次接入</h3>
-                                <p>先完成参数配置，再做一次试运行，确认日志和记录都正常后再启动任务。</p>
+                                <h3>1. 先连通</h3>
+                                <p>先完成 ADB 安装、手机连接和 USB 调试授权，确保控制台能识别设备。</p>
                               </article>
                               <article className="guide-doc-note-card">
-                                <h3>日常巡检</h3>
-                                <p>优先查看监控总览和下一次计划，如需调整窗口，保存后立即复查状态。</p>
+                                <h3>2. 再验证</h3>
+                                <p>按“一键自检 → 刷新设备状态 → 试运行”的顺序，先确认链路正常，再决定是否启动。</p>
                               </article>
                               <article className="guide-doc-note-card">
-                                <h3>异常恢复</h3>
-                                <p>先看告警日志，再看打卡记录与时间线，修复后重新执行自检和试运行。</p>
+                                <h3>3. 最后上线</h3>
+                                <p>确认排期、设备和参数都无误后，再点击“启动任务”，避免直接上线导致漏打卡。</p>
                               </article>
                             </div>
                           </section>
 
-                          <section className="guide-doc-section" aria-labelledby="guide-troubleshooting">
-                            <h2 id="guide-troubleshooting" className="guide-doc-h2">异常排查顺序</h2>
+                          <section className="guide-doc-section" aria-labelledby="guide-first-time">
+                            <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+                              <div>
+                                <div className="mb-2 flex flex-wrap items-center gap-2">
+                                  <Badge variant="outline" className="rounded-md">02</Badge>
+                                  <Badge variant="secondary" className="rounded-md">新手必看</Badge>
+                                </div>
+                                <h2 id="guide-first-time" className="guide-doc-h2">第一次使用怎么做</h2>
+                              </div>
+                              <p className="text-sm text-muted-foreground">预计 3-5 分钟完成首次接入。</p>
+                            </div>
+                            <div className="guide-doc-grid">
+                              <article className="guide-doc-note-card">
+                                <h3>准备阶段</h3>
+                                <ul className="guide-doc-list mt-3">
+                                  <li>确认本机能运行后端服务。</li>
+                                  <li>确认已经安装或准备安装 ADB。</li>
+                                  <li>准备好需要连接的安卓手机和 USB 数据线。</li>
+                                </ul>
+                              </article>
+                              <article className="guide-doc-note-card">
+                                <h3>配置阶段</h3>
+                                <ul className="guide-doc-list mt-3">
+                                  <li>进入“任务配置”，检查 serial、adb_bin、应用包名和状态文件路径。</li>
+                                  <li>核对上午/下午时间窗口，确认下一次执行时间合理。</li>
+                                  <li>多设备场景下优先绑定 serial，避免误选设备。</li>
+                                </ul>
+                              </article>
+                              <article className="guide-doc-note-card">
+                                <h3>验证阶段</h3>
+                                <ul className="guide-doc-list mt-3">
+                                  <li>先执行“一键自检”，确认依赖和设备都可用。</li>
+                                  <li>再执行“刷新设备状态”，看控制台是否识别到目标设备。</li>
+                                  <li>最后用“试运行”验证实际动作链路。</li>
+                                </ul>
+                              </article>
+                            </div>
+                          </section>
+
+                          <section
+                            id="guide-connection-wizard"
+                            className="guide-doc-section scroll-mt-28"
+                            aria-labelledby="guide-connection-wizard-title"
+                          >
+                            <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+                              <div>
+                                <div className="mb-2 flex flex-wrap items-center gap-2">
+                                  <Badge variant="outline" className="rounded-md">03</Badge>
+                                  <Badge variant="warning" className="rounded-md">关键路径</Badge>
+                                </div>
+                                <h2 id="guide-connection-wizard-title" className="guide-doc-h2">连接向导</h2>
+                              </div>
+                              <p className="text-sm text-muted-foreground">先完成连接，再做排期和正式启动。</p>
+                            </div>
+                            <p className="guide-doc-lead text-sm">
+                              如果你是第一次接入，建议先看这里。连接成功后，再去做排期设置和正式启动，会更顺畅。
+                            </p>
+
+                            <div className="space-y-4">
+                              <GuideAccordionItem
+                                title="电脑端操作"
+                                description="安装 ADB、启动后端、刷新状态和执行自检，都属于电脑端操作。"
+                                open={activeGuidePanel === "desktop"}
+                                onToggle={() =>
+                                  setActiveGuidePanel((current) => (current === "desktop" ? "" : "desktop"))
+                                }
+                              >
+
+                                <div className="mt-3 space-y-3">
+                                  <p className="text-sm leading-6 text-muted-foreground">
+                                    按下面顺序完成电脑端检查，确认本机依赖、ADB 状态和控制台连接都正常。
+                                  </p>
+                                  <div className="guide-flow">
+                                    <div className="guide-flow-rail" aria-hidden="true" />
+                                    {wizardSteps.map((step, index) => {
+                                      const isActive = activeWizardStep?.key === step.key;
+                                      const badgeTone = step.done ? "success" : isActive ? "warning" : "outline";
+                                      return (
+                                        <div
+                                          key={step.key}
+                                          className={cn(
+                                            "guide-flow-item",
+                                            step.done && "guide-flow-item--done",
+                                            isActive && !step.done && "guide-flow-item--active",
+                                          )}
+                                        >
+                                          <div className="guide-flow-node" aria-hidden="true" />
+                                          <div className="guide-flow-card">
+                                            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                                              <div className="space-y-2">
+                                                <div className="flex flex-wrap items-center gap-2">
+                                                  <Badge variant={badgeTone} className="rounded-md">
+                                                    {step.done ? "已完成" : isActive ? "进行中" : "待处理"}
+                                                  </Badge>
+                                                  <p className="text-sm font-medium">{`${index + 1}. ${step.title}`}</p>
+                                                </div>
+                                                <p className="text-sm leading-6 text-muted-foreground">{step.detail}</p>
+                                                {step.code ? (
+                                                  <pre className="rounded-lg border bg-muted/30 px-3 py-2 text-xs text-foreground">
+                                                    {step.code}
+                                                  </pre>
+                                                ) : null}
+                                              </div>
+                                              {step.done ? (
+                                                <Badge variant="outline" className="rounded-md">
+                                                  OK
+                                                </Badge>
+                                              ) : null}
+                                            </div>
+                                            {!step.done && (step.primaryAction || step.secondaryAction) ? (
+                                              <div className="mt-3 flex flex-wrap gap-2">
+                                                {step.primaryAction ? (
+                                                  <Button size="sm" onClick={step.primaryAction.onClick}>
+                                                    {step.primaryAction.label}
+                                                  </Button>
+                                                ) : null}
+                                                {step.secondaryAction ? (
+                                                  <Button variant="outline" size="sm" onClick={step.secondaryAction.onClick}>
+                                                    {step.secondaryAction.label}
+                                                  </Button>
+                                                ) : null}
+                                              </div>
+                                            ) : null}
+                                          </div>
+                                        </div>
+                                      );
+                                    })}
+                                    <div className="guide-flow-footer">
+                                      <p className="text-xs text-muted-foreground">
+                                        每完成一步建议点击“刷新状态”，让控制台同步最新设备信息。
+                                      </p>
+                                      <div className="flex items-center gap-2">
+                                        <Button size="sm" onClick={() => handleAction("刷新设备状态")}>
+                                          刷新状态
+                                        </Button>
+                                      </div>
+                                    </div>
+                                  </div>
+                                </div>
+                              </GuideAccordionItem>
+
+                              <GuideAccordionItem
+                                title="设备端操作"
+                                description="USB 连接、开发者选项和 USB 调试授权，需要在手机上完成。"
+                                open={activeGuidePanel === "device"}
+                                onToggle={() =>
+                                  setActiveGuidePanel((current) => (current === "device" ? "" : "device"))
+                                }
+                              >
+                                <ol className="guide-doc-steps">
+                                  <li>用 USB 数据线把安卓手机连接到当前电脑，尽量避免只充电线或不稳定转接头。</li>
+                                  <li>进入手机“设置 → 关于手机”，连续点击版本号，开启“开发者选项”。</li>
+                                  <li>进入“设置 → 开发者选项”，打开“USB 调试”。</li>
+                                  <li>若手机连接后弹出“仅充电 / 传输文件”选择，优先切到“文件传输”或允许 USB 访问。</li>
+                                  <li>看到“是否允许 USB 调试”弹窗时，点击“允许”；常用设备建议勾选“总是允许这台电脑调试”。</li>
+                                  <li>完成后回到控制台，点击“刷新设备状态”或执行“一键自检”。</li>
+                                </ol>
+                              </GuideAccordionItem>
+                            </div>
+
+                            <article className="mt-4 overflow-hidden rounded-2xl border border-amber-200/70 bg-amber-50/70 dark:border-amber-900/40 dark:bg-amber-950/20">
+                              <div className="border-b border-amber-200/70 px-5 py-4 dark:border-amber-900/40">
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <Badge variant="warning" className="rounded-md">高频问题</Badge>
+                                  <h3 className="text-base font-semibold">连接失败时先看这里</h3>
+                                </div>
+                                <p className="mt-2 text-sm leading-6 text-muted-foreground">
+                                  大多数连接问题都集中在数据线、USB 模式、授权弹窗和多设备绑定这四类场景。
+                                </p>
+                              </div>
+                              <div className="px-5 py-4">
+                                <ul className="guide-doc-list space-y-3">
+                                  <li><strong>看不到设备：</strong> 先换数据线、USB 口，确认手机不是“仅充电”模式。</li>
+                                  <li><strong>设备显示 unauthorized：</strong> 说明手机还没点授权，解锁屏幕后重新插拔或重新授权。</li>
+                                  <li><strong>多台设备同时在线：</strong> 需要在“任务配置”里填写 serial，绑定目标设备。</li>
+                                  <li><strong>ADB 已安装但还是失败：</strong> 可先点“重启 ADB”，再重新刷新状态。</li>
+                                </ul>
+                              </div>
+                            </article>
+                          </section>
+
+                          <section className="guide-doc-section" aria-labelledby="guide-daily-use">
+                            <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+                              <div>
+                                <div className="mb-2 flex flex-wrap items-center gap-2">
+                                  <Badge variant="outline" className="rounded-md">04</Badge>
+                                  <Badge variant="secondary" className="rounded-md">日常使用</Badge>
+                                </div>
+                                <h2 id="guide-daily-use" className="guide-doc-h2">日常使用看这三块</h2>
+                              </div>
+                              <p className="text-sm text-muted-foreground">每天主要只需要关注这 3 个区域。</p>
+                            </div>
+                            <div className="guide-doc-grid">
+                              <article className="guide-doc-note-card">
+                                <h3>监控总览</h3>
+                                <p>先看设备状态、当前风险和下一次执行时间，判断今天能不能正常跑。</p>
+                              </article>
+                              <article className="guide-doc-note-card">
+                                <h3>任务配置</h3>
+                                <p>修改设备参数、时间窗口和开关后，记得保存，再复查状态。</p>
+                              </article>
+                              <article className="guide-doc-note-card">
+                                <h3>打卡记录 / 告警日志</h3>
+                                <p>一个用来看结果，一个用来查原因。出现异常时先看日志，再回到记录核对影响范围。</p>
+                              </article>
+                            </div>
+                          </section>
+
+                          <section className="guide-doc-section" aria-labelledby="guide-action-order">
+                            <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+                              <div>
+                                <div className="mb-2 flex flex-wrap items-center gap-2">
+                                  <Badge variant="outline" className="rounded-md">05</Badge>
+                                  <Badge variant="secondary" className="rounded-md">操作口诀</Badge>
+                                </div>
+                                <h2 id="guide-action-order" className="guide-doc-h2">推荐操作顺序</h2>
+                              </div>
+                              <p className="text-sm text-muted-foreground">记住：先自检，再试运行，最后启动任务。</p>
+                            </div>
                             <ol className="guide-doc-steps">
-                              <li>确认设备连接和 ADB 授权状态是否正常。</li>
-                              <li>检查工作日接口和轮询超时参数是否可用。</li>
-                              <li>核对上午/下午窗口时间范围与随机时间是否合理。</li>
-                              <li>在告警日志中定位错误，再到打卡记录验证影响范围。</li>
-                              <li>问题修复后执行“一键自检”和“试运行”确认恢复。</li>
+                              <li>先看设备是否在线、ADB 是否可用。</li>
+                              <li>如有配置改动，先保存，再刷新状态。</li>
+                              <li>执行“一键自检”，确认依赖和设备无阻断问题。</li>
+                              <li>执行“试运行”，确认真实动作链路可用。</li>
+                              <li>确认无误后再“启动任务”或进入日常托管。</li>
+                            </ol>
+                          </section>
+
+                          <section className="guide-doc-section" aria-labelledby="guide-troubleshooting">
+                            <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+                              <div>
+                                <div className="mb-2 flex flex-wrap items-center gap-2">
+                                  <Badge variant="outline" className="rounded-md">06</Badge>
+                                  <Badge variant="warning" className="rounded-md">异常处理</Badge>
+                                </div>
+                                <h2 id="guide-troubleshooting" className="guide-doc-h2">异常排查顺序</h2>
+                              </div>
+                              <p className="text-sm text-muted-foreground">按顺序排查，能明显减少重复试错。</p>
+                            </div>
+                            <ol className="guide-doc-steps">
+                              <li>先确认设备连接、USB 调试授权和 ADB 安装是否正常。</li>
+                              <li>再检查工作日接口、轮询参数和排期时间是否合理。</li>
+                              <li>如果动作失败，先看告警日志，再看打卡记录与时间线。</li>
+                              <li>问题修复后，重新执行“一键自检”和“试运行”确认恢复。</li>
                             </ol>
                           </section>
                         </article>
@@ -2746,92 +2940,46 @@ function FocusStrip({ focus }) {
   );
 }
 
-function ConnectionWizard({ open, steps, activeStep, onClose, onRefresh }) {
-  if (!open) return null;
-
+function GuideAccordionItem({ title, description, open, onToggle, children }) {
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/40 px-4 py-10 backdrop-blur-sm">
-      <div className="w-full max-w-4xl">
-        <Card className="shadow-2xl">
-          <CardHeader className="flex flex-col gap-4 border-b sm:flex-row sm:items-center sm:justify-between">
-            <div className="space-y-2">
-              <CardTitle>连接向导</CardTitle>
-              <CardDescription>按步骤完成 ADB 安装、设备授权与绑定。</CardDescription>
-            </div>
-            <Button variant="ghost" size="icon" onClick={onClose}>
-              <X className="size-4" />
-            </Button>
-          </CardHeader>
-          <CardContent className="space-y-4 pt-5">
-            <div className="grid gap-3">
-              {steps.map((step, index) => {
-                const isActive = activeStep?.key === step.key;
-                const badgeTone = step.done ? "success" : isActive ? "warning" : "outline";
-                return (
-                  <div
-                    key={step.key}
-                    className={cn(
-                      "rounded-xl border p-4",
-                      step.done ? "bg-muted/20" : "bg-background",
-                      isActive && !step.done ? "border-foreground/20" : "border-border/70",
-                    )}
-                  >
-                    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                      <div className="space-y-2">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <Badge variant={badgeTone} className="rounded-md">
-                            {step.done ? "已完成" : isActive ? "进行中" : "待处理"}
-                          </Badge>
-                          <p className="text-sm font-medium">{`${index + 1}. ${step.title}`}</p>
-                        </div>
-                        <p className="text-sm leading-6 text-muted-foreground">{step.detail}</p>
-                        {step.code ? (
-                          <pre className="rounded-lg border bg-muted/30 px-3 py-2 text-xs text-foreground">
-                            {step.code}
-                          </pre>
-                        ) : null}
-                      </div>
-                      {step.done ? (
-                        <Badge variant="outline" className="rounded-md">
-                          OK
-                        </Badge>
-                      ) : null}
-                    </div>
-                    {!step.done && (step.primaryAction || step.secondaryAction) ? (
-                      <div className="mt-3 flex flex-wrap gap-2">
-                        {step.primaryAction ? (
-                          <Button size="sm" onClick={step.primaryAction.onClick}>
-                            {step.primaryAction.label}
-                          </Button>
-                        ) : null}
-                        {step.secondaryAction ? (
-                          <Button variant="outline" size="sm" onClick={step.secondaryAction.onClick}>
-                            {step.secondaryAction.label}
-                          </Button>
-                        ) : null}
-                      </div>
-                    ) : null}
-                  </div>
-                );
-              })}
-            </div>
-            <div className="flex flex-col gap-3 border-t pt-4 sm:flex-row sm:items-center sm:justify-between">
-              <p className="text-xs text-muted-foreground">
-                每完成一步建议点击“刷新状态”，让控制台同步最新设备信息。
-              </p>
-              <div className="flex items-center gap-2">
-                <Button variant="outline" size="sm" onClick={onClose}>
-                  稍后
-                </Button>
-                <Button size="sm" onClick={onRefresh}>
-                  刷新状态
-                </Button>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
+    <article
+      className={cn(
+        "overflow-hidden rounded-2xl border bg-background/90 shadow-sm transition-all duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]",
+        open ? "border-border shadow-sm" : "border-border/70",
+      )}
+    >
+      <button
+        type="button"
+        onClick={onToggle}
+        aria-expanded={open}
+        className={cn(
+          "flex w-full items-center justify-between gap-3 px-5 py-4 text-left transition-colors duration-300",
+          open ? "bg-muted/35" : "hover:bg-muted/25",
+        )}
+      >
+        <div>
+          <h3>{title}</h3>
+          <p className="mt-1 text-sm text-muted-foreground">{description}</p>
+        </div>
+        <ChevronRight
+          className={cn(
+            "size-4 shrink-0 text-muted-foreground transition-transform duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]",
+            open && "rotate-90",
+          )}
+        />
+      </button>
+
+      <div
+        className={cn(
+          "grid transition-[grid-template-rows,opacity] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]",
+          open ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0",
+        )}
+      >
+        <div className="overflow-hidden">
+          <div className="border-t px-5 py-4">{children}</div>
+        </div>
       </div>
-    </div>
+    </article>
   );
 }
 
