@@ -968,7 +968,7 @@ class ApiHandler(BaseHTTPRequestHandler):
     def end_headers(self) -> None:
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Allow-Headers", "Content-Type")
-        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS, HEAD")
         super().end_headers()
 
     def send_json(self, status_code: int, payload: dict[str, Any]) -> None:
@@ -996,6 +996,18 @@ class ApiHandler(BaseHTTPRequestHandler):
 
     def do_OPTIONS(self) -> None:  # noqa: N802
         self.send_response(204)
+        self.end_headers()
+
+    def do_HEAD(self) -> None:  # noqa: N802
+        path = urlparse(self.path).path
+        if path in {"/api/health", "/api/dashboard", "/api/checkin-records"}:
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
+        self.send_response(404)
+        self.send_header("Content-Length", "0")
         self.end_headers()
 
     def do_GET(self) -> None:  # noqa: N802
