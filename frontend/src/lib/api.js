@@ -71,6 +71,13 @@ export function runDoctor() {
   });
 }
 
+export function restartAdb() {
+  return request("/api/actions/adb-restart", {
+    method: "POST",
+    body: JSON.stringify({}),
+  });
+}
+
 export function runOnce() {
   return request("/api/actions/run-once", {
     method: "POST",

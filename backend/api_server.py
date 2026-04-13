@@ -369,11 +369,11 @@ def resolve_device_snapshot(config: dict[str, Any]) -> dict[str, Any]:
     selected_serial = config["serial"] or ""
     status: scheduler.DeviceStatus | None = None
     error = ""
+    statuses: list[scheduler.DeviceStatus] = []
 
     if adb_bin:
         try:
-            selected_serial = selected_serial or scheduler.detect_single_device()
-            status = scheduler.get_device_status(selected_serial)
+            statuses = scheduler.list_device_statuses()
         except subprocess.CalledProcessError as exc:
             error = summarize_adb_connection_error(scheduler.describe_process_error(exc))
         except Exception as exc:
@@ -383,6 +383,24 @@ def resolve_device_snapshot(config: dict[str, Any]) -> dict[str, Any]:
             "设备连接器缺少 adb：请运行 python3 scripts/install_platform_tools.py，"
             "或在前台配置 adb_bin 为 platform-tools/adb 的绝对路径。"
         )
+
+    if adb_bin and not error:
+        if selected_serial:
+            status = next((item for item in statuses if item.serial == selected_serial), None)
+            if status is None and statuses:
+                error = f"设备 {selected_serial} 未出现在 adb 列表中，请确认 USB 连接或更新 serial。"
+        else:
+            online = [item for item in statuses if item.state == "device"]
+            if len(online) == 1:
+                status = online[0]
+                selected_serial = online[0].serial
+            elif len(online) > 1:
+                error = f"检测到 {len(online)} 台设备，请在前台配置 serial 绑定目标设备。"
+            elif len(statuses) == 1:
+                status = statuses[0]
+                selected_serial = statuses[0].serial
+            elif not statuses:
+                error = "未发现在线设备：请确认 USB 已连接、已开启 USB 调试，并重新刷新设备状态。"
 
     scrcpy_running = False
     if scrcpy_bin and selected_serial:
@@ -401,6 +419,15 @@ def resolve_device_snapshot(config: dict[str, Any]) -> dict[str, Any]:
         else:
             processed_warnings.append(warning)
 
+    device_count = len(statuses)
+    online_count = len([item for item in statuses if item.state == "device"])
+    unauthorized_count = len([item for item in statuses if item.state == "unauthorized"])
+    offline_count = len([item for item in statuses if item.state == "offline"])
+    device_list = [
+        {"serial": item.serial, "state": item.state, "usbConnected": item.usb_connected}
+        for item in statuses[:5]
+    ]
+
     return {
         "serial": selected_serial,
         "summary": scheduler.status_summary(status) if status else "unavailable",
@@ -414,6 +441,11 @@ def resolve_device_snapshot(config: dict[str, Any]) -> dict[str, Any]:
         "adbBin": adb_bin or "",
         "adbSource": scheduler.describe_binary_source(adb_bin, config["adb_bin"] or None),
         "adbInstallHint": "python3 scripts/install_platform_tools.py",
+        "deviceCount": device_count,
+        "onlineCount": online_count,
+        "unauthorizedCount": unauthorized_count,
+        "offlineCount": offline_count,
+        "devices": device_list,
         "scrcpyAvailable": bool(scrcpy_bin),
         "scrcpyBin": scrcpy_bin or "",
         "scrcpySource": scheduler.describe_binary_source(scrcpy_bin, config["scrcpy_bin"] or None),
@@ -611,10 +643,14 @@ def build_status_tags(
     tags = [f"任务 {process_state['label']}"]
     if device["serial"]:
         tags.append(f"设备 {device['serial']}")
+    elif device.get("deviceCount", 0) > 1:
+        tags.append("多设备未绑定")
     if not device.get("adbAvailable"):
         tags.append("ADB 未安装")
     else:
         tags.append("ADB 已授权" if device["ready"] else "ADB 待处理")
+    if device.get("unauthorizedCount"):
+        tags.append("设备未授权")
     if workday.get("enabled") and workday.get("isWorkday") is not None:
         tags.append("今天是工作日" if workday["isWorkday"] else "今天非工作日")
     if device["scrcpyRunning"]:
@@ -845,6 +881,27 @@ def run_once() -> dict[str, Any]:
     }
 
 
+def restart_adb() -> dict[str, Any]:
+    config = load_console_config()
+    args = build_namespace(config, command="status")
+    try:
+        adb_bin = scheduler.resolve_binary("adb", args.adb_bin, scheduler.ADB_CANDIDATES)
+    except Exception as exc:
+        raise ApiError(400, f"ADB 不可用：{exc}") from exc
+
+    try:
+        output = scheduler.restart_adb_server(adb_bin)
+    except subprocess.CalledProcessError as exc:
+        raise ApiError(500, scheduler.describe_process_error(exc)) from exc
+    except Exception as exc:
+        raise ApiError(500, str(exc)) from exc
+
+    return {
+        "message": "ADB 已重启",
+        "detail": output or "ADB daemon 已重新启动。",
+    }
+
+
 def reroll_schedule() -> dict[str, Any]:
     config = load_console_config()
     apply_console_windows(config)
@@ -965,6 +1022,8 @@ class ApiHandler(BaseHTTPRequestHandler):
                     result = run_cli_command("doctor")
                     if not result["ok"]:
                         raise ApiError(500, result["output"])
+                elif path == "/api/actions/adb-restart":
+                    result = restart_adb()
                 elif path == "/api/actions/run-once":
                     result = run_once()
                 elif path == "/api/actions/start":

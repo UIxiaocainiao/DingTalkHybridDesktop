@@ -19,6 +19,7 @@ import {
   Menu,
   MoonStar,
   Play,
+  Power,
   RefreshCw,
   Search,
   ShieldCheck,
@@ -46,6 +47,7 @@ import {
   fetchDashboard,
   fetchCheckinRecords,
   rerollSchedule,
+  restartAdb,
   runDoctor,
   runOnce,
   saveConfig,
@@ -196,6 +198,13 @@ const actions = [
     icon: RefreshCw,
     group: "primary",
     note: "重新读取当前设备连接、授权和日志状态。",
+  },
+  {
+    label: "重启 ADB",
+    style: "secondary",
+    icon: Power,
+    group: "support",
+    note: "重启 adb server，适合连接异常或 5037 端口占用时使用。",
   },
   {
     label: "试运行",
@@ -443,6 +452,18 @@ function formatDeviceConnectionNote(deviceState) {
     return `ADB 未就绪：${deviceState.adbInstallHint ?? "先安装 platform-tools/adb"}`;
   }
 
+  if (!deviceState.serial && deviceState.deviceCount > 1) {
+    return `检测到 ${deviceState.deviceCount} 台设备，请配置 serial 绑定目标设备。`;
+  }
+
+  if (deviceState.deviceCount === 0) {
+    return "未发现在线设备，请确认 USB 已连接并开启 USB 调试。";
+  }
+
+  if (deviceState.usbConnected && !deviceState.authorized) {
+    return "设备已连接但未授权，请在手机上确认 USB 调试授权。";
+  }
+
   const adbSource = deviceState.adbSource ? `ADB ${deviceState.adbSource}` : "ADB 已找到";
   const serial = deviceState.serial ? `serial: ${deviceState.serial}` : "等待设备连接或授权";
   return `${serial} / ${adbSource}`;
@@ -491,6 +512,7 @@ function App() {
         "一键自检",
         "查看排期",
         "刷新设备状态",
+        "重启 ADB",
         "停止任务",
         "调试模式",
         "试运行",
@@ -824,6 +846,28 @@ function App() {
         title: "当前优先项：先恢复后端连接",
         detail: "前端无法读取后端真实状态，当前页面数据可能不是最新结果。",
         chips: ["启动 backend/api_server.py", "恢复后自动拉取状态", "不要在离线状态下误判结果"],
+      };
+    }
+
+    if (dashboard?.device && !dashboard.device.adbAvailable) {
+      return {
+        tone: "destructive",
+        title: "当前优先项：安装 ADB 连接器",
+        detail: dashboard.device.error || "ADB 未就绪，无法继续设备动作。",
+        chips: [
+          dashboard.device.adbInstallHint || "python3 scripts/install_platform_tools.py",
+          "安装后刷新设备状态",
+          "如需指定路径，可在前台填写 adb_bin",
+        ],
+      };
+    }
+
+    if (dashboard?.device?.usbConnected && !dashboard.device.authorized) {
+      return {
+        tone: "warning",
+        title: "当前优先项：完成 USB 调试授权",
+        detail: "设备已连接但未授权，请在手机上确认 USB 调试授权弹窗。",
+        chips: ["手机上点击允许 USB 调试", "必要时重新插拔 USB", "授权后刷新设备状态"],
       };
     }
 
@@ -1295,6 +1339,9 @@ function App() {
           description: nextDashboard?.device?.error || "已从后端重新读取设备、排期与日志状态。",
         });
         return;
+      } else if (label === "重启 ADB") {
+        toastMethod = "warning";
+        response = await restartAdb();
       } else if (label === "启动任务") {
         response = await startScheduler("run");
       } else if (label === "停止任务") {

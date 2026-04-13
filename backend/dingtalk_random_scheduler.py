@@ -295,6 +295,21 @@ def run_adb(adb_bin: str, serial: str | None, args: Iterable[str]) -> subprocess
     return subprocess.run(command, capture_output=True, text=True, check=True)
 
 
+def restart_adb_server(adb_bin: str) -> str:
+    def run_cmd(args: Iterable[str], check: bool) -> subprocess.CompletedProcess[str]:
+        return subprocess.run([adb_bin, *args], capture_output=True, text=True, check=check)
+
+    kill_result = run_cmd(["kill-server"], check=False)
+    start_result = run_cmd(["start-server"], check=True)
+
+    output = "\n".join(
+        part.strip()
+        for part in [kill_result.stdout, kill_result.stderr, start_result.stdout, start_result.stderr]
+        if part and part.strip()
+    )
+    return output
+
+
 def describe_process_error(exc: subprocess.CalledProcessError) -> str:
     stderr = (exc.stderr or "").strip()
     stdout = (exc.stdout or "").strip()
