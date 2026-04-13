@@ -840,17 +840,16 @@ def run_once() -> dict[str, Any]:
         scheduler.ADB_BIN = scheduler.resolve_binary("adb", args.adb_bin, scheduler.ADB_CANDIDATES)
         serial = args.serial or scheduler.detect_single_device()
         status = scheduler.get_device_status(serial)
-        if config.get("enable_scrcpy_watch"):
-            try:
-                scrcpy_bin = scheduler.resolve_binary("scrcpy", args.scrcpy_bin, scheduler.SCRCPY_CANDIDATES)
-                scheduler.SCRCPY_BIN = scrcpy_bin
-                if scheduler.is_scrcpy_running_for_serial(serial):
-                    scrcpy_note = "scrcpy 已在运行。"
-                else:
-                    scheduler.launch_scrcpy(serial)
-                    scrcpy_note = "scrcpy 已拉起。"
-            except Exception as exc:
-                scrcpy_note = f"scrcpy 未启动: {exc}"
+        try:
+            scrcpy_bin = scheduler.resolve_binary("scrcpy", args.scrcpy_bin, scheduler.SCRCPY_CANDIDATES)
+            scheduler.SCRCPY_BIN = scrcpy_bin
+            if scheduler.is_scrcpy_running_for_serial(serial):
+                scrcpy_note = "scrcpy 已在运行。"
+            else:
+                scheduler.launch_scrcpy(serial)
+                scrcpy_note = "scrcpy 已拉起。"
+        except Exception as exc:
+            scrcpy_note = f"scrcpy 未启动: {exc}"
     except subprocess.CalledProcessError as exc:
         raise ApiError(400, scheduler.describe_process_error(exc)) from exc
     except Exception as exc:
