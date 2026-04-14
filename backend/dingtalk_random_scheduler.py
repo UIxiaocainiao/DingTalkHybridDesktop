@@ -26,9 +26,14 @@ import urllib.error
 import urllib.request
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
-from datetime import date, datetime, time as dt_time, timedelta
+from datetime import date, datetime, time as dt_time, timedelta, timezone
 from pathlib import Path
 from typing import Iterable
+
+try:
+    from zoneinfo import ZoneInfo
+except ModuleNotFoundError:  # pragma: no cover - Python < 3.9 fallback
+    ZoneInfo = None
 
 
 DEFAULT_PACKAGE = "com.alibaba.android.rimet"
@@ -45,6 +50,7 @@ DEFAULT_STATE_FILE = str(BASE_DIR / "logs/dingtalk-random-scheduler.state.json")
 DEFAULT_CONFIG_FILE = str(BASE_DIR / "runtime/console-config.json")
 DEFAULT_WORKDAY_API_URL = "https://holiday.dreace.top?date={date}"
 DEFAULT_WORKDAY_API_TIMEOUT = 5.0
+BEIJING_TZ = ZoneInfo("Asia/Shanghai") if ZoneInfo else timezone(timedelta(hours=8), "CST")
 OSASCRIPT_BIN = "/usr/bin/osascript"
 ADB_BIN = "adb"
 SCRCPY_BIN = "scrcpy"
@@ -211,8 +217,16 @@ EVENING_MESSAGES: tuple[str, ...] = (
 )
 
 
+def now_beijing() -> datetime:
+    return datetime.now(BEIJING_TZ).replace(tzinfo=None)
+
+
+def today_beijing() -> date:
+    return now_beijing().date()
+
+
 def log(message: str) -> None:
-    print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] {message}", flush=True)
+    print(f"[{now_beijing().strftime('%Y-%m-%d %H:%M:%S')}] {message}", flush=True)
 
 
 def format_timestamp(value: datetime) -> str:
@@ -841,7 +855,7 @@ def save_scheduler_state(path: Path, state: SchedulerState) -> None:
             if state.last_workday_check
             else None
         ),
-        "updated_at": datetime.now().isoformat(),
+        "updated_at": now_beijing().isoformat(),
     }
     temp_path = path.with_suffix(path.suffix + ".tmp")
     temp_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
@@ -868,7 +882,7 @@ def set_next_run_for_window(state: SchedulerState, window: TimeWindow, clock_tim
         )
 
     current_next_run = state.next_runs.get(window.name)
-    target_day = current_next_run.date() if current_next_run else datetime.now().date()
+    target_day = current_next_run.date() if current_next_run else today_beijing()
     custom_next_run = datetime.combine(target_day, clock_time)
     state.next_runs[window.name] = custom_next_run
     return custom_next_run
@@ -897,7 +911,7 @@ def fetch_workday_status(target_day: date, api_url_template: str, timeout: float
         is_workday=is_workday,
         note=note or type_label or ("工作日" if is_workday else "假日"),
         source=request_url,
-        checked_at=datetime.now(),
+        checked_at=now_beijing(),
     )
 
 
@@ -955,7 +969,7 @@ def perform_action(serial: str, package: str, app_label: str, delay_after_launch
 
 
 def process_due_windows(config: Config, state: SchedulerState) -> None:
-    now = datetime.now()
+    now = now_beijing()
     for window in WINDOWS:
         scheduled_time = state.next_runs[window.name]
         if now < scheduled_time:
@@ -987,7 +1001,7 @@ def process_due_windows(config: Config, state: SchedulerState) -> None:
                 notify_message = (
                     completion_message
                     if completion_message
-                    else f"{window.name} window completed at {datetime.now().strftime('%H:%M:%S')}."
+                    else f"{window.name} window completed at {now_beijing().strftime('%H:%M:%S')}."
                 )
                 notify_user("DingTalk automation completed", notify_message)
         except subprocess.CalledProcessError as exc:
@@ -1127,14 +1141,14 @@ def build_config(args: argparse.Namespace, serial: str) -> Config:
 
 def command_schedule(args: argparse.Namespace) -> int:
     state_file = Path(args.state_file).expanduser()
-    state = load_scheduler_state(state_file, datetime.now())
+    state = load_scheduler_state(state_file, now_beijing())
     print_schedule_report(state, state_file)
     return 0
 
 
 def command_set_next(args: argparse.Namespace) -> int:
     state_file = Path(args.state_file).expanduser()
-    now = datetime.now()
+    now = now_beijing()
     state = load_scheduler_state(state_file, now)
 
     try:
@@ -1155,7 +1169,7 @@ def command_set_next(args: argparse.Namespace) -> int:
 
 def command_status(args: argparse.Namespace) -> int:
     state_file = Path(args.state_file).expanduser()
-    state = load_scheduler_state(state_file, datetime.now())
+    state = load_scheduler_state(state_file, now_beijing())
     print_schedule_report(state, state_file)
 
     adb_bin, scrcpy_bin, warnings = resolve_binaries_for_inspection(args)
@@ -1212,7 +1226,7 @@ def command_doctor(args: argparse.Namespace) -> int:
             print("WARN scrcpy: unavailable, but production mode only needs adb.")
 
     try:
-        state = load_scheduler_state(state_file, datetime.now())
+        state = load_scheduler_state(state_file, now_beijing())
         save_scheduler_state(state_file, state)
         print(f"OK   state file: {state_file}")
     except Exception as exc:
@@ -1222,7 +1236,7 @@ def command_doctor(args: argparse.Namespace) -> int:
         print("OK   workday check: disabled")
     else:
         try:
-            result = fetch_workday_status(date.today(), args.workday_api_url, max(1.0, args.workday_api_timeout))
+            result = fetch_workday_status(today_beijing(), args.workday_api_url, max(1.0, args.workday_api_timeout))
             decision = "workday" if result.is_workday else "non-workday"
             print(f"OK   workday API: {decision} ({result.note})")
         except Exception as exc:
@@ -1304,7 +1318,7 @@ def command_run(args: argparse.Namespace) -> int:
         return 1
 
     config = build_config(args, serial)
-    state = load_scheduler_state(config.state_file, datetime.now())
+    state = load_scheduler_state(config.state_file, now_beijing())
     save_scheduler_state(config.state_file, state)
 
     log(f"Using adb {ADB_BIN}.")
@@ -1371,12 +1385,12 @@ def command_run(args: argparse.Namespace) -> int:
             if is_device_ready(device_status):
                 if config.enable_workday_check:
                     try:
-                        workday_result = ensure_workday_status(config, state, datetime.now().date())
+                        workday_result = ensure_workday_status(config, state, today_beijing())
                     except Exception as exc:
                         log(f"Workday check failed, continuing with normal scheduling: {exc}")
                         workday_result = None
                     if workday_result and not workday_result.is_workday:
-                        roll_windows_forward_for_non_workday(config, state, datetime.now().date())
+                        roll_windows_forward_for_non_workday(config, state, today_beijing())
                     else:
                         process_due_windows(config, state)
                 else:

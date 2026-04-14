@@ -202,7 +202,7 @@ def build_runtime_config(config: dict[str, Any], serial: str) -> scheduler.Confi
 
 def load_scheduler_state(config: dict[str, Any]) -> scheduler.SchedulerState:
     state_file = Path(config["state_file"]).expanduser()
-    return scheduler.load_scheduler_state(state_file, datetime.now())
+    return scheduler.load_scheduler_state(state_file, scheduler.now_beijing())
 
 
 def save_scheduler_state(config: dict[str, Any], state: scheduler.SchedulerState) -> None:
@@ -256,7 +256,7 @@ def save_checkin_record(record: dict[str, str]) -> None:
 
 def add_checkin_record(window_name: str, status: str, remark: str = "") -> None:
     """Add a check-in record with current timestamp."""
-    now = datetime.now()
+    now = scheduler.now_beijing()
     record = {
         "date": now.strftime("%Y-%m-%d"),
         "time": now.strftime("%H:%M:%S"),
@@ -340,7 +340,7 @@ def resolve_workday_snapshot(
     if not config["enable_workday_check"]:
         return None, None
 
-    today = date.today()
+    today = scheduler.today_beijing()
     if state.last_workday_check and state.last_workday_check.checked_date == today:
         return state.last_workday_check, None
 
@@ -717,7 +717,7 @@ def build_dashboard() -> dict[str, Any]:
     workday = serialize_workday_result(workday_result, workday_error)
 
     return {
-        "generatedAt": datetime.now().isoformat(),
+        "generatedAt": scheduler.now_beijing().isoformat(),
         "config": config,
         "scheduler": process_state,
         "device": device,
@@ -786,7 +786,7 @@ def start_scheduler_process(mode: str) -> dict[str, Any]:
         {
             "pid": process.pid,
             "mode": mode,
-            "started_at": datetime.now().isoformat(),
+            "started_at": scheduler.now_beijing().isoformat(),
             "command": [sys.executable, str(SCRIPT_PATH), mode, "--config-file", str(CONFIG_FILE)],
         }
     )
@@ -861,7 +861,7 @@ def run_once() -> dict[str, Any]:
     scheduler.log("Manual run triggered from web console.")
 
     # 确定当前是哪个打卡窗口
-    now = datetime.now()
+    now = scheduler.now_beijing()
     current_time = now.time()
     window_name = "手动执行"
     for window in scheduler.WINDOWS:
@@ -916,7 +916,7 @@ def restart_adb() -> dict[str, Any]:
 def reroll_schedule() -> dict[str, Any]:
     config = load_console_config()
     apply_console_windows(config)
-    now = datetime.now()
+    now = scheduler.now_beijing()
     state = load_scheduler_state(config)
     for window in scheduler.WINDOWS:
         state.next_runs[window.name] = scheduler.next_run_after(now, window)
@@ -1014,7 +1014,7 @@ class ApiHandler(BaseHTTPRequestHandler):
         try:
             path = urlparse(self.path).path
             if path == "/api/health":
-                self.send_json(200, {"ok": True, "now": datetime.now().isoformat()})
+                self.send_json(200, {"ok": True, "now": scheduler.now_beijing().isoformat()})
                 return
             if path == "/api/dashboard":
                 with API_LOCK:
@@ -1055,9 +1055,10 @@ class ApiHandler(BaseHTTPRequestHandler):
                     result = stop_scheduler_process()
                 elif path == "/api/checkin-records":
                     # POST for adding a new record manually
+                    recorded_at = scheduler.now_beijing()
                     record = {
-                        "date": str(payload.get("date") or datetime.now().strftime("%Y-%m-%d")),
-                        "time": str(payload.get("time") or datetime.now().strftime("%H:%M:%S")),
+                        "date": str(payload.get("date") or recorded_at.strftime("%Y-%m-%d")),
+                        "time": str(payload.get("time") or recorded_at.strftime("%H:%M:%S")),
                         "type": str(payload.get("type") or "手动记录"),
                         "status": str(payload.get("status") or "成功"),
                         "remark": str(payload.get("remark") or ""),
