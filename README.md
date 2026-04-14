@@ -103,6 +103,24 @@ Scheduler (dingtalk_random_scheduler.py)
 
 ## Quick Start
 
+### 一键拉取仓库代码（首次 clone / 后续 pull）
+
+```bash
+bash scripts/pull_repo.sh \
+  --repo-url git@github.com:UIxiaocainiao/DingTalk-automatic-check-in.git \
+  --branch main \
+  --target-dir ./DingTalk-automatic-check-in
+```
+
+如需在当前目录更新：
+
+```bash
+bash scripts/pull_repo.sh \
+  --repo-url git@github.com:UIxiaocainiao/DingTalk-automatic-check-in.git \
+  --branch main \
+  --target-dir .
+```
+
 ### 0) 电脑端先检查 Python3（必须）
 
 ```bash
