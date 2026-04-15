@@ -11,7 +11,7 @@
 ## 目录结构（已对齐）
 
 ```text
-DingTalk-automatic-check-in/
+DingTalkHybridDesktop/
 ├── frontend/
 │   ├── public/
 │   │   ├── favicon.ico

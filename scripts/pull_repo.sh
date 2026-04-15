@@ -13,15 +13,15 @@ usage() {
     [--remote <REMOTE>]
 
 示例:
-  # 在当前目录拉取本项目到 ./DingTalk-automatic-check-in
+  # 在当前目录拉取本项目到 ./DingTalkHybridDesktop
   bash scripts/pull_repo.sh \
-    --repo-url git@github.com:UIxiaocainiao/DingTalk-automatic-check-in.git \
+    --repo-url git@github.com:UIxiaocainiao/DingTalkHybridDesktop.git \
     --branch main \
-    --target-dir ./DingTalk-automatic-check-in
+    --target-dir ./DingTalkHybridDesktop
 
   # 在已有仓库目录更新到 main
   bash scripts/pull_repo.sh \
-    --repo-url git@github.com:UIxiaocainiao/DingTalk-automatic-check-in.git \
+    --repo-url git@github.com:UIxiaocainiao/DingTalkHybridDesktop.git \
     --branch main \
     --target-dir .
 

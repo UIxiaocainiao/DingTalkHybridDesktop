@@ -10,7 +10,7 @@
 
 ## Railway（后端）
 
-- Git 仓库：`git@github.com:UIxiaocainiao/DingTalk-automatic-check-in.git`
+- Git 仓库：`git@github.com:UIxiaocainiao/DingTalkHybridDesktop.git`
 - Root Directory：`backend`
 - Start Command：`python3 api_server.py --host 0.0.0.0 --port ${PORT:-8000}`
 - Healthcheck Path：`/api/health`

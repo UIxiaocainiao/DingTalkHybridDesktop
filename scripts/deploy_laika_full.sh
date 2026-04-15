@@ -19,7 +19,7 @@ usage() {
     --server-ip 154.201.77.53 \
     --ssh-port 22737 \
     --ssh-user root \
-    --repo-url https://github.com/UIxiaocainiao/DingTalk-automatic-check-in.git \
+    --repo-url https://github.com/UIxiaocainiao/DingTalkHybridDesktop.git \
     --branch main \
     --root-domain pengshz.cn \
     --app-rr dingtalk \

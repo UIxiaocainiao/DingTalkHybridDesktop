@@ -4,9 +4,9 @@
 
 ```bash
 bash scripts/pull_repo.sh \
-  --repo-url git@github.com:UIxiaocainiao/DingTalk-automatic-check-in.git \
+  --repo-url git@github.com:UIxiaocainiao/DingTalkHybridDesktop.git \
   --branch main \
-  --target-dir ./DingTalk-automatic-check-in
+  --target-dir ./DingTalkHybridDesktop
 ```
 
 ## 1) 一键部署到莱卡云

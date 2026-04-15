@@ -17,7 +17,7 @@
 已按“基础版”完成目录整理，当前结构如下：
 
 ```text
-DingTalk-automatic-check-in/
+DingTalkHybridDesktop/
 ├── frontend/                          # 前端页面
 │   ├── public/
 │   ├── src/
@@ -110,16 +110,16 @@ Scheduler (dingtalk_random_scheduler.py)
 
 ```bash
 bash scripts/pull_repo.sh \
-  --repo-url git@github.com:UIxiaocainiao/DingTalk-automatic-check-in.git \
+  --repo-url git@github.com:UIxiaocainiao/DingTalkHybridDesktop.git \
   --branch main \
-  --target-dir ./DingTalk-automatic-check-in
+  --target-dir ./DingTalkHybridDesktop
 ```
 
 如需在当前目录更新：
 
 ```bash
 bash scripts/pull_repo.sh \
-  --repo-url git@github.com:UIxiaocainiao/DingTalk-automatic-check-in.git \
+  --repo-url git@github.com:UIxiaocainiao/DingTalkHybridDesktop.git \
   --branch main \
   --target-dir .
 ```
@@ -174,7 +174,7 @@ python3 --version
 1. Android 11+ 无线调试：直接在手机开发者选项里拿到无线调试地址，再填入 `remote_adb_target`
 2. 传统 `adb tcpip 5555`：先 USB 授权，再把手机切到 TCP 模式，最后填 `手机IP:5555`
 
-更详细步骤见 [docs/adb-device-setup.md](/Users/pengshz/DingTalk-automatic-check-in/docs/adb-device-setup.md)。
+更详细步骤见 [docs/adb-device-setup.md](/Users/pengshz/DingTalkHybridDesktop/docs/adb-device-setup.md)。
 
 ### 5) 启动后端 API
 

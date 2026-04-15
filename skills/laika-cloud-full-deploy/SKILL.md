@@ -1,16 +1,16 @@
 ---
 name: laika-cloud-full-deploy
 description: >-
-  Deploy DingTalk-automatic-check-in to a Laika VPS end-to-end (frontend + backend +
+  Deploy DingTalkHybridDesktop to a Laika VPS end-to-end (frontend + backend +
   Nginx + systemd), configure Alibaba Cloud DNS A record, issue Let's Encrypt HTTPS,
   and complete acceptance checks with rollback guidance. Use when user asks to deploy this
   project to Laika cloud/VPS or replicate production deployment.
 ---
-# Laika Cloud Full Deploy (DingTalk-automatic-check-in)
+# Laika Cloud Full Deploy (DingTalkHybridDesktop)
 
 ## Scope
 
-This skill is for **this repo only**: `DingTalk-automatic-check-in`.
+This skill is for **this repo only**: `DingTalkHybridDesktop`.
 
 Target result:
 
@@ -35,7 +35,7 @@ Collect these values before execution:
 1. `SERVER_IP` (example `154.201.77.53`)
 2. `SSH_PORT` (example `22737`)
 3. `SSH_USER` (usually `root`)
-4. `REPO_URL` (example `https://github.com/UIxiaocainiao/DingTalk-automatic-check-in.git`)
+4. `REPO_URL` (example `https://github.com/UIxiaocainiao/DingTalkHybridDesktop.git`)
 5. `BRANCH` (usually `main`)
 6. `ROOT_DOMAIN` (example `pengshz.cn`)
 7. `APP_RR` (example `dingtalk`)
@@ -73,7 +73,7 @@ bash scripts/deploy_laika_full.sh \
   --server-ip 154.201.77.53 \
   --ssh-port 22737 \
   --ssh-user root \
-  --repo-url https://github.com/UIxiaocainiao/DingTalk-automatic-check-in.git \
+  --repo-url https://github.com/UIxiaocainiao/DingTalkHybridDesktop.git \
   --branch main \
   --root-domain pengshz.cn \
   --app-rr dingtalk \

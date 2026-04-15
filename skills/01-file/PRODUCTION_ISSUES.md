@@ -31,7 +31,7 @@
      - `scrcpyAvailable: false`
      - 设备数 `deviceCount: 0`
      - 告警包含“调度器未启动”和“设备连接器异常”
-   - 生产配置中的 `state_file` 仍是本机路径：`/Users/pengshz/DingTalk-automatic-check-in/backend/logs/dingtalk-random-scheduler.state.json`。
+   - 生产配置中的 `state_file` 仍是本机路径：`/Users/pengshz/DingTalkHybridDesktop/backend/logs/dingtalk-random-scheduler.state.json`。
    - 影响：即使 API 可访问，也无法执行钉钉打卡任务；需要在可访问本机 ADB/USB 设备的设备连接器环境运行，或修正生产环境变量/配置。
 
 4. 原有 `scripts/verify_public_deploy.sh` 会误判通过，现已补强。
