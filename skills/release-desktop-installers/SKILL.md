@@ -107,6 +107,45 @@ curl -sS https://github.com/<owner>/<repo>/releases/expanded_assets/vX.Y.Z | \
   rg -n "\\.dmg|\\.exe"
 ```
 
+## 备选方案：macOS 签名与公证（可选）
+
+适用条件：
+- 需要从发布侧彻底规避“已损坏，无法打开”提示。
+- 有可用的 Apple Developer 账号与 Developer ID 证书。
+
+### 1) 在 GitHub Secrets 配置证书与公证参数
+
+- `CSC_LINK`：`.p12` 证书的 base64 或可访问地址。
+- `CSC_KEY_PASSWORD`：`.p12` 证书密码。
+- `APPLE_ID`：Apple ID（用于 notarization）。
+- `APPLE_APP_SPECIFIC_PASSWORD`：App 专用密码。
+- `APPLE_TEAM_ID`：Apple Team ID。
+
+### 2) 在 macOS 构建 job 增加环境变量
+
+```yaml
+- name: Build macOS dmg (signed + notarized)
+  working-directory: desktop
+  run: npm exec electron-builder -- --config electron-builder.json --mac dmg --publish never
+  env:
+    CSC_LINK: ${{ secrets.CSC_LINK }}
+    CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+    APPLE_ID: ${{ secrets.APPLE_ID }}
+    APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+    APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+```
+
+### 3) 发布后额外校验（macOS）
+
+```bash
+codesign --verify --deep --strict --verbose=2 /Applications/DingTalkHybridDesktop.app
+spctl --assess -vv /Applications/DingTalkHybridDesktop.app
+```
+
+说明：
+- 这是“备选增强流程”，不是当前最小可用发布的必选项。
+- 若先追求上线速度，可继续用当前流程；若面向外部用户分发，建议尽快切换到该方案。
+
 ## 常见失败与修复
 
 ### 1) 两个平台都在 step 7 秒失败
