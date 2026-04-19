@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+DEFAULT_PLAYBACK_DIR="${ROOT_DIR%/DingTalkHybridDesktop}/PlaybackE2E"
+PLAYBACK_DIR="${PLAYBACK_DIR:-$DEFAULT_PLAYBACK_DIR}"
+
+if [[ ! -d "$PLAYBACK_DIR" ]]; then
+  echo "[playback] 未找到 PlaybackE2E 目录: $PLAYBACK_DIR"
+  echo "[playback] 你可以先设置环境变量 PLAYBACK_DIR=/absolute/path/to/PlaybackE2E"
+  exit 1
+fi
+
+echo "[playback] starting services from: $PLAYBACK_DIR"
+node "$PLAYBACK_DIR/scripts/background/start.js"
+node "$PLAYBACK_DIR/scripts/background/status.js"

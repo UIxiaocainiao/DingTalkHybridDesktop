@@ -4,7 +4,7 @@ function Card({ className, ...props }) {
   return (
     <div
       className={cn(
-        "rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] text-[hsl(var(--card-foreground))] shadow-sm",
+        "rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] text-[hsl(var(--card-foreground))]",
         className,
       )}
       {...props}
@@ -13,7 +13,7 @@ function Card({ className, ...props }) {
 }
 
 function CardHeader({ className, ...props }) {
-  return <div className={cn("flex flex-col space-y-1.5 p-4", className)} {...props} />;
+  return <div className={cn("flex flex-col space-y-2 p-4", className)} {...props} />;
 }
 
 function CardTitle({ className, ...props }) {
@@ -30,7 +30,7 @@ function CardDescription({ className, ...props }) {
 }
 
 function CardContent({ className, ...props }) {
-  return <div className={cn("p-4 pt-0", className)} {...props} />;
+  return <div className={cn("p-4", className)} {...props} />;
 }
 
 export { Card, CardHeader, CardTitle, CardDescription, CardContent };

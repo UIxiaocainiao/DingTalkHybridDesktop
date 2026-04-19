@@ -6,9 +6,18 @@
     "frontend"
   ],
   "scripts": {
-    "dev": "npm run dev --workspace frontend",
-    "backend:start": "npm run start --prefix backend --",
+    "dev": "concurrently -k -n backend,frontend -c yellow,cyan \"npm run dev:backend\" \"npm run dev:frontend\"",
+    "dev:frontend": "npm run dev --workspace frontend",
+    "dev:backend": "npm run start --prefix backend --",
+    "backend:start": "npm run dev:backend",
     "build": "npm run build --workspace frontend",
-    "preview": "npm run preview --workspace frontend"
+    "preview": "npm run preview --workspace frontend",
+    "playback:bootstrap": "bash scripts/playbacke2e-bootstrap.sh",
+    "playback:start": "bash scripts/playbacke2e-start.sh",
+    "playback:status": "bash scripts/playbacke2e-status.sh",
+    "playback:stop": "bash scripts/playbacke2e-stop.sh"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.1"
   }
 }

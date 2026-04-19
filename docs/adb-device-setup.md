@@ -88,8 +88,8 @@ adb tcpip 5555
 ## 4) 启动服务
 
 ```bash
-python3 backend/api_server.py --host 127.0.0.1 --port 8000
-cd frontend && npm install && npm run dev
+npm install
+npm run dev
 ```
 
 ## 常见问题

@@ -6,6 +6,7 @@ import {
   Bot,
   Bug,
   CheckCheck,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
   CircleHelp,
@@ -58,17 +59,99 @@ import {
   startScheduler,
   stopScheduler,
 } from "./api";
+import {
+  clearPlaybackProgramDashboardLogs,
+  exportPlaybackProgramDashboard,
+  fetchPlaybackDeviceApps,
+  fetchPlaybackDevices,
+  fetchPlaybackProgramDashboard,
+  playbackStartProgram,
+  playbackStopProgram,
+  playbackUnlockDevice,
+} from "./api/playback";
 import { cn } from "./lib/utils.js";
 
 gsap.registerPlugin(GSAPSplitText);
 
-const navItems = [
-  { id: "overview", label: "监控总览", icon: Gauge },
-  { id: "actions", label: "任务配置", icon: FolderCog },
-  { id: "guide", label: "使用说明", icon: CircleHelp },
-  { id: "records", label: "打卡记录", icon: ClipboardList },
-  { id: "logs", label: "告警日志", icon: BellRing },
+const PROJECT_NAV_ITEMS = [
+  { id: "dingtalk", label: "自动钉钉打卡项目", icon: Bot },
+  { id: "playback", label: "自动刷视频项目", icon: CirclePlay },
 ];
+
+const DINGTALK_PRIMARY_STANDALONE_NAV_ITEMS = [{ id: "overview", label: "运行总览", icon: Gauge }];
+const DINGTALK_FEATURE_GROUP_NAV = {
+  id: "feature-center",
+  label: "打卡功能",
+  icon: FolderCog,
+  items: [
+    { id: "actions", label: "任务配置", icon: FolderCog },
+    { id: "records", label: "打卡记录", icon: ClipboardList },
+    { id: "logs", label: "告警日志", icon: BellRing },
+  ],
+};
+const GUIDE_NAV_ITEM = { id: "guide", label: "使用说明", icon: CircleHelp };
+const PLAYBACK_NAV_ITEMS = [
+  { id: "playback-devices", label: "设备管理", icon: Smartphone },
+  { id: "playback-dashboard", label: "运行看板", icon: ListChecks },
+];
+const PLAYBACK_CONSOLE_MODULE_NAME = "playback-project-console";
+const ADVANCED_SEARCH_FEATURE_MODULE_ID = "advanced-search-feature";
+const ADVANCED_SEARCH_FEATURE_MODULE_NAME = "高级搜索功能";
+
+const SECTION_GROUP_MAP = {
+  overview: "overview",
+  actions: "actions",
+  windows: "actions",
+  config: "actions",
+  records: "records",
+  logs: "logs",
+  guards: "logs",
+  guide: "guide",
+  "guide-connection-wizard": "guide",
+  "playback-devices": "playback-devices",
+  "playback-dashboard": "playback-dashboard",
+};
+
+const SECTION_TOPBAR_META = {
+  overview: { title: "监控总览与执行态势", tone: "overview" },
+  actions: { title: "任务配置与排期管理", tone: "config" },
+  records: { title: "打卡记录", tone: "records" },
+  logs: { title: "告警日志与通知中心", tone: "notify" },
+  guide: { title: "使用说明", tone: "config" },
+  "playback-devices": { title: "自动刷视频 · 设备管理", tone: "overview" },
+  "playback-dashboard": { title: "自动刷视频 · 运行看板", tone: "notify" },
+};
+
+const SECTION_NAV_META = {
+  overview: { label: "运行总览", hint: "查看当前设备、调度与风险状态" },
+  actions: { label: "任务配置", hint: "调整参数、排期窗口与执行动作" },
+  records: { label: "打卡记录", hint: "按日期和状态追踪执行结果" },
+  logs: { label: "告警日志", hint: "定位异常并快速做处置决策" },
+  guide: { label: "使用说明", hint: "查看连接向导与操作文档" },
+  "playback-devices": { label: "设备管理", hint: "管理刷视频设备与应用目标" },
+  "playback-dashboard": { label: "运行看板", hint: "观察刷视频任务执行态势" },
+};
+
+const SIDEBAR_NAV_SEARCH_INPUT_ID = "sidebar-nav-search-input";
+const SIDEBAR_RECENT_SECTIONS_KEY = "sidebar-recent-sections-v1";
+const SIDEBAR_RECENT_LIMIT = 5;
+
+const SIDEBAR_ALL_NAV_ITEMS = [
+  ...DINGTALK_PRIMARY_STANDALONE_NAV_ITEMS,
+  ...DINGTALK_FEATURE_GROUP_NAV.items,
+  GUIDE_NAV_ITEM,
+  ...PLAYBACK_NAV_ITEMS,
+];
+
+const SIDEBAR_NAV_ITEM_INDEX = Object.fromEntries(
+  SIDEBAR_ALL_NAV_ITEMS.map((item) => [item.id, item]),
+);
+
+const PLAYBACK_SECTIONS = new Set(PLAYBACK_NAV_ITEMS.map((item) => item.id));
+
+function resolveProjectFromSection(sectionId) {
+  return PLAYBACK_SECTIONS.has(sectionId) ? "playback" : "dingtalk";
+}
 
 const quickChecklist = [
   "先看设备是否已连接且 ADB 已授权",
@@ -727,6 +810,10 @@ function App() {
     if (typeof window === "undefined") return false;
     return window.localStorage.getItem("sidebar-collapsed") === "1";
   });
+  const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
+  const [commandPaletteQuery, setCommandPaletteQuery] = useState("");
+  const [commandPaletteActiveIndex, setCommandPaletteActiveIndex] = useState(0);
+  const [activeProject, setActiveProject] = useState("dingtalk");
   const [activeSection, setActiveSection] = useState("overview");
   const [topbarTitle, setTopbarTitle] = useState("监控总览与执行态势");
   const [topbarTone, setTopbarTone] = useState("overview");
@@ -1011,12 +1098,14 @@ function App() {
 
     return [
       {
+        id: "scheduler",
         label: "当前任务状态",
         value: dashboard?.scheduler?.label ?? "未启动",
         note: dashboard?.scheduler?.detail ?? "等待后端返回真实调度进程状态。",
         icon: Activity,
       },
       {
+        id: "device",
         label: "设备状态",
         value: deviceLabel,
         note:
@@ -1026,6 +1115,7 @@ function App() {
         icon: Smartphone,
       },
       {
+        id: "next-window",
         label: pendingWindowSummary.label,
         value: pendingWindowSummary.time,
         note: pendingWindowSummary.detail,
@@ -1033,6 +1123,7 @@ function App() {
         tone: pendingWindowSummary.tone,
       },
       {
+        id: "recent-success",
         label: "最近成功执行",
         value: latestSuccessSummary.headline,
         note:
@@ -1568,70 +1659,32 @@ function App() {
   }, []);
 
   useEffect(() => {
-    const sectionIds = navItems.map((item) => item.id);
-    const elements = sectionIds.map((id) => document.getElementById(id)).filter(Boolean);
-
-    const observer = new IntersectionObserver(
-      (entries) => {
-        const visible = entries
-          .filter((entry) => entry.isIntersecting)
-          .sort((a, b) => b.intersectionRatio - a.intersectionRatio);
-
-        if (visible[0]?.target?.id) {
-          setActiveSection(visible[0].target.id);
-        }
-      },
-      { rootMargin: "-15% 0px -55% 0px", threshold: [0.2, 0.35, 0.6] },
-    );
-
-    elements.forEach((element) => observer.observe(element));
-    return () => observer.disconnect();
-  }, []);
+    const nextMeta = SECTION_TOPBAR_META[activeSection] ?? SECTION_TOPBAR_META.overview;
+    setTopbarTitle((current) => (current === nextMeta.title ? current : nextMeta.title));
+    setTopbarTone((current) => (current === nextMeta.tone ? current : nextMeta.tone));
+  }, [activeSection]);
 
   useEffect(() => {
     if (typeof window === "undefined") return undefined;
+    const rawHash = window.location.hash.replace(/^#/, "");
+    if (!rawHash) return undefined;
 
-    const regions = () => Array.from(document.querySelectorAll("[data-region-title]"));
-    let frameId = 0;
+    const initialSection = SECTION_GROUP_MAP[rawHash] ?? "overview";
+    setActiveProject(resolveProjectFromSection(initialSection));
+    setActiveSection(initialSection);
 
-    const syncTopbarMeta = () => {
-      const currentRegions = regions();
-      if (!currentRegions.length) return;
-
-      const threshold = 132;
-      let nextTitle = "监控总览与执行态势";
-      let nextTone = "overview";
-
-      for (const region of currentRegions) {
-        if (region.offsetParent === null) continue;
-        const rect = region.getBoundingClientRect();
-        if (rect.top <= threshold) {
-          nextTitle = region.getAttribute("data-region-title") || nextTitle;
-          nextTone = region.getAttribute("data-region-tone") || nextTone;
+    window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => {
+        const target = document.getElementById(rawHash);
+        if (target) {
+          target.scrollIntoView({ behavior: "auto", block: "start" });
+          return;
         }
-      }
-
-      setTopbarTitle((current) => (current === nextTitle ? current : nextTitle));
-      setTopbarTone((current) => (current === nextTone ? current : nextTone));
-    };
-
-    const onScrollOrResize = () => {
-      if (frameId) return;
-      frameId = window.requestAnimationFrame(() => {
-        frameId = 0;
-        syncTopbarMeta();
+        window.scrollTo({ top: 0, left: 0, behavior: "auto" });
       });
-    };
+    });
 
-    syncTopbarMeta();
-    window.addEventListener("scroll", onScrollOrResize, { passive: true });
-    window.addEventListener("resize", onScrollOrResize);
-
-    return () => {
-      window.removeEventListener("scroll", onScrollOrResize);
-      window.removeEventListener("resize", onScrollOrResize);
-      if (frameId) window.cancelAnimationFrame(frameId);
-    };
+    return undefined;
   }, []);
 
   useEffect(() => {
@@ -1665,61 +1718,67 @@ function App() {
   };
 
   const scrollToSection = useCallback((id) => {
-    const target = document.getElementById(id);
-    if (!target) return;
-    target.scrollIntoView({ behavior: "smooth", block: "start" });
-  }, []);
+    const targetGroup = SECTION_GROUP_MAP[id] ?? "overview";
+    setActiveProject(resolveProjectFromSection(targetGroup));
+    setActiveSection(targetGroup);
 
-  const openGuideSection = useCallback((anchorId = "guide") => {
-    setActiveSection("guide");
-    setTopbarTitle("使用说明");
-    setTopbarTone("config");
-
-    const hash = anchorId ? `#${anchorId}` : "#guide";
+    const hashTarget = targetGroup === "guide" ? id : targetGroup;
+    const hash = targetGroup === "overview" ? "" : `#${hashTarget}`;
     window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}${hash}`);
 
     window.requestAnimationFrame(() => {
-      if (anchorId && document.getElementById(anchorId)) {
-        document.getElementById(anchorId)?.scrollIntoView({ behavior: "smooth", block: "start" });
-        return;
-      }
+      window.requestAnimationFrame(() => {
+        const target = document.getElementById(id);
+        if (target) {
+          target.scrollIntoView({ behavior: "smooth", block: "start" });
+          return;
+        }
+        window.scrollTo({ top: 0, left: 0, behavior: "smooth" });
+      });
+    });
+  }, []);
+
+  const openGuideSection = useCallback((anchorId = "guide") => {
+    scrollToSection(anchorId || "guide");
+  }, [scrollToSection]);
+
+  const handleProjectSwitch = useCallback((projectId) => {
+    setMobileNavOpen(false);
+    if (projectId === "playback") {
+      setActiveProject("playback");
+      setActiveSection("playback-devices");
+      window.history.replaceState(
+        null,
+        "",
+        `${window.location.pathname}${window.location.search}#playback-devices`,
+      );
+      window.requestAnimationFrame(() => {
+        window.scrollTo({ top: 0, left: 0, behavior: "smooth" });
+      });
+      return;
+    }
+
+    setActiveProject("dingtalk");
+    setActiveSection("overview");
+    window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}`);
+    window.requestAnimationFrame(() => {
       window.scrollTo({ top: 0, left: 0, behavior: "smooth" });
     });
   }, []);
 
   const handleNavClick = (event, id) => {
+    event?.preventDefault?.();
     setMobileNavOpen(false);
-    if (id === "guide") {
-      event.preventDefault();
-      openGuideSection("guide");
-      return;
-    }
+    const targetGroup = SECTION_GROUP_MAP[id] ?? "overview";
+    setActiveProject(resolveProjectFromSection(targetGroup));
+    setActiveSection(targetGroup);
 
-    if (id === "overview") {
-      event.preventDefault();
-      setActiveSection("overview");
-      setTopbarTitle("监控总览与执行态势");
-      setTopbarTone("overview");
-      window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}`);
-      window.scrollTo({ top: 0, left: 0, behavior: "smooth" });
-      return;
-    }
+    const hashTarget = targetGroup === "guide" ? "guide" : targetGroup;
+    const hash = targetGroup === "overview" ? "" : `#${hashTarget}`;
+    window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}${hash}`);
 
-    event.preventDefault();
-    setActiveSection(id);
-    if (id === "actions") {
-      setTopbarTitle("任务配置与排期管理");
-      setTopbarTone("config");
-    } else if (id === "records") {
-      setTopbarTitle("打卡记录");
-      setTopbarTone("records");
-    } else if (id === "logs") {
-      setTopbarTitle("告警日志与通知中心");
-      setTopbarTone("notify");
-    }
-    window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}#${id}`);
     window.requestAnimationFrame(() => {
-      document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
+      window.scrollTo({ top: 0, left: 0, behavior: "smooth" });
     });
   };
 
@@ -1747,7 +1806,7 @@ function App() {
     }
 
     if (label === "查看排期") {
-      document.getElementById("windows")?.scrollIntoView({ behavior: "smooth", block: "start" });
+      scrollToSection("windows");
       toast.success("已定位到排期设置", {
         description: "你可以直接修改时间窗口或手动指定下一次打卡时间。",
       });
@@ -1822,6 +1881,300 @@ function App() {
       setPendingAction((current) => (current === label ? "" : current));
     }
   };
+
+  const focusQuickActions = (() => {
+    if (apiError) {
+      return [
+        { key: "refresh", label: "刷新设备状态", variant: "outline", onClick: () => handleAction("刷新设备状态") },
+        { key: "guide", label: "打开连接向导", variant: "outline", onClick: () => openGuideSection("guide-connection-wizard") },
+      ];
+    }
+
+    if (hasBlockingIssues) {
+      return [
+        { key: "fix", label: "去修复配置", variant: "default", onClick: () => scrollToSection("config") },
+        { key: "doctor", label: "一键自检", variant: "outline", onClick: () => handleAction("一键自检") },
+      ];
+    }
+
+    if (needsConnectionGuide || dashboard?.device?.error) {
+      return [
+        { key: "refresh", label: "刷新设备状态", variant: "default", onClick: () => handleAction("刷新设备状态") },
+        { key: "doctor", label: "一键自检", variant: "outline", onClick: () => handleAction("一键自检") },
+        { key: "guide", label: "连接向导", variant: "outline", onClick: () => openGuideSection("guide-connection-wizard") },
+      ];
+    }
+
+    if (dashboard?.scheduler?.running && dashboard?.device?.ready) {
+      return [
+        { key: "schedule", label: "查看排期", variant: "outline", onClick: () => scrollToSection("windows") },
+        { key: "logs", label: "查看告警日志", variant: "outline", onClick: () => handleNavClick(undefined, "logs") },
+      ];
+    }
+
+    return [
+      { key: "doctor", label: "一键自检", variant: "default", onClick: () => handleAction("一键自检") },
+      { key: "run-once", label: "试运行", variant: "outline", onClick: () => handleAction("试运行") },
+      { key: "actions", label: "前往任务配置", variant: "outline", onClick: () => scrollToSection("actions") },
+    ];
+  })();
+
+  const openCommandPalette = useCallback(() => {
+    setCommandPaletteOpen(true);
+  }, []);
+
+  const closeCommandPalette = useCallback(() => {
+    setCommandPaletteOpen(false);
+    setCommandPaletteQuery("");
+    setCommandPaletteActiveIndex(0);
+  }, []);
+
+  const commandPaletteItems = useMemo(
+    () => [
+      {
+        id: "goto-overview",
+        group: "导航",
+        label: "前往 运行总览",
+        hint: "监控总览与执行态势",
+        icon: Gauge,
+        shortcut: "G O",
+        keywords: "overview 总览 监控",
+        run: () => handleNavClick(undefined, "overview"),
+      },
+      {
+        id: "goto-actions",
+        group: "导航",
+        label: "前往 任务配置",
+        hint: "配置参数与时间窗口",
+        icon: FolderCog,
+        shortcut: "G A",
+        keywords: "actions 配置 参数",
+        run: () => handleNavClick(undefined, "actions"),
+      },
+      {
+        id: "goto-records",
+        group: "导航",
+        label: "前往 打卡记录",
+        hint: "查看历史执行结果",
+        icon: ClipboardList,
+        shortcut: "G R",
+        keywords: "records 记录",
+        run: () => handleNavClick(undefined, "records"),
+      },
+      {
+        id: "goto-logs",
+        group: "导航",
+        label: "前往 告警日志",
+        hint: "查看异常与告警",
+        icon: BellRing,
+        shortcut: "G L",
+        keywords: "logs 告警 日志",
+        run: () => handleNavClick(undefined, "logs"),
+      },
+      {
+        id: "goto-guide",
+        group: "导航",
+        label: "前往 使用说明",
+        hint: "打开连接向导与文档",
+        icon: CircleHelp,
+        shortcut: "G ?",
+        keywords: "guide 文档 说明 连接向导",
+        run: () => handleNavClick(undefined, "guide"),
+      },
+      {
+        id: "goto-playback-devices",
+        group: "导航",
+        label: "前往 刷视频设备管理",
+        hint: "进入 Playback 设备页",
+        icon: Smartphone,
+        shortcut: "G D",
+        keywords: "playback devices 设备",
+        run: () => handleNavClick(undefined, "playback-devices"),
+      },
+      {
+        id: "goto-playback-dashboard",
+        group: "导航",
+        label: "前往 刷视频运行看板",
+        hint: "进入 Playback 看板页",
+        icon: ListChecks,
+        shortcut: "G B",
+        keywords: "playback dashboard 看板",
+        run: () => handleNavClick(undefined, "playback-dashboard"),
+      },
+      {
+        id: "switch-project-dingtalk",
+        group: "项目",
+        label: "切换到 自动钉钉打卡项目",
+        hint: "回到钉钉控制台",
+        icon: Bot,
+        shortcut: "P D",
+        keywords: "project dingtalk",
+        visible: activeProject !== "dingtalk",
+        run: () => handleProjectSwitch("dingtalk"),
+      },
+      {
+        id: "switch-project-playback",
+        group: "项目",
+        label: "切换到 自动刷视频项目",
+        hint: "切到 Playback 控制台",
+        icon: CirclePlay,
+        shortcut: "P P",
+        keywords: "project playback",
+        visible: activeProject !== "playback",
+        run: () => handleProjectSwitch("playback"),
+      },
+      {
+        id: "action-save-config",
+        group: "操作",
+        label: "执行 保存配置",
+        hint: "将草稿同步到后端配置",
+        icon: CheckCheck,
+        shortcut: "A S",
+        keywords: "save 保存 配置",
+        visible: activeProject === "dingtalk",
+        run: () => handleAction("保存配置"),
+      },
+      {
+        id: "action-doctor",
+        group: "操作",
+        label: "执行 一键自检",
+        hint: "检查 ADB、设备与服务链路",
+        icon: Stethoscope,
+        shortcut: "A D",
+        keywords: "doctor 自检",
+        visible: activeProject === "dingtalk",
+        run: () => handleAction("一键自检"),
+      },
+      {
+        id: "action-run-once",
+        group: "操作",
+        label: "执行 试运行",
+        hint: "单次模拟执行流程",
+        icon: Play,
+        shortcut: "A R",
+        keywords: "run once 试运行",
+        visible: activeProject === "dingtalk",
+        run: () => handleAction("试运行"),
+      },
+      {
+        id: "action-start",
+        group: "操作",
+        label: "执行 启动任务",
+        hint: "启动正式调度",
+        icon: Power,
+        shortcut: "A G",
+        keywords: "start 启动",
+        visible: activeProject === "dingtalk",
+        run: () => handleAction("启动任务"),
+      },
+      {
+        id: "action-stop",
+        group: "操作",
+        label: "执行 停止任务",
+        hint: "停止调度任务",
+        icon: Power,
+        shortcut: "A X",
+        keywords: "stop 停止",
+        visible: activeProject === "dingtalk",
+        run: () => handleAction("停止任务"),
+      },
+      {
+        id: "action-refresh",
+        group: "操作",
+        label: "执行 刷新设备状态",
+        hint: "从后端刷新当前状态",
+        icon: RefreshCw,
+        shortcut: "A F",
+        keywords: "refresh 刷新",
+        visible: activeProject === "dingtalk",
+        run: () => handleAction("刷新设备状态"),
+      },
+    ],
+    [activeProject, handleAction, handleNavClick, handleProjectSwitch],
+  );
+
+  const filteredCommandPaletteItems = useMemo(() => {
+    const keyword = commandPaletteQuery.trim().toLowerCase();
+    return commandPaletteItems
+      .filter((item) => item.visible !== false)
+      .filter((item) => {
+        if (!keyword) return true;
+        const haystack = `${item.label} ${item.hint ?? ""} ${item.keywords ?? ""}`.toLowerCase();
+        return haystack.includes(keyword);
+      });
+  }, [commandPaletteItems, commandPaletteQuery]);
+
+  useEffect(() => {
+    if (commandPaletteActiveIndex < filteredCommandPaletteItems.length) return;
+    setCommandPaletteActiveIndex(0);
+  }, [commandPaletteActiveIndex, filteredCommandPaletteItems.length]);
+
+  const executeCommandPaletteItem = useCallback(
+    async (item) => {
+      if (!item?.run) return;
+      closeCommandPalette();
+      try {
+        await Promise.resolve(item.run());
+      } catch (error) {
+        toast.error("命令执行失败", {
+          description: error?.message || "请稍后重试。",
+        });
+      }
+    },
+    [closeCommandPalette],
+  );
+
+  useEffect(() => {
+    if (typeof window === "undefined") return undefined;
+
+    const onKeyDown = (event) => {
+      if (event.isComposing) return;
+
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        setCommandPaletteOpen(true);
+        return;
+      }
+
+      if (!commandPaletteOpen) return;
+
+      if (event.key === "Escape") {
+        event.preventDefault();
+        closeCommandPalette();
+        return;
+      }
+
+      if (!filteredCommandPaletteItems.length) return;
+
+      if (event.key === "ArrowDown") {
+        event.preventDefault();
+        setCommandPaletteActiveIndex((current) => (current + 1) % filteredCommandPaletteItems.length);
+        return;
+      }
+
+      if (event.key === "ArrowUp") {
+        event.preventDefault();
+        setCommandPaletteActiveIndex((current) =>
+          current <= 0 ? filteredCommandPaletteItems.length - 1 : current - 1,
+        );
+        return;
+      }
+
+      if (event.key === "Enter") {
+        event.preventDefault();
+        executeCommandPaletteItem(filteredCommandPaletteItems[commandPaletteActiveIndex]);
+      }
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [
+    closeCommandPalette,
+    commandPaletteActiveIndex,
+    commandPaletteOpen,
+    executeCommandPaletteItem,
+    filteredCommandPaletteItems,
+  ]);
 
   const wizardSteps = useMemo(() => {
     const steps = [];
@@ -2081,6 +2434,9 @@ function App() {
             detail: "当前展示的是后端真实配置，修改后需要显式保存才会生效。",
           };
 
+  const showTopbar = !(activeProject === "dingtalk" && activeSection === "guide");
+  const showBottomStickyMenu = activeProject === "dingtalk" && activeSection !== "guide";
+
   return (
     <div
       className="unified-icon-scale min-h-screen bg-background text-foreground"
@@ -2103,6 +2459,22 @@ function App() {
         )}
         aria-hidden={!mobileNavOpen}
         onClick={() => setMobileNavOpen(false)}
+      />
+
+      <CommandPalette
+        moduleId={ADVANCED_SEARCH_FEATURE_MODULE_ID}
+        moduleName={ADVANCED_SEARCH_FEATURE_MODULE_NAME}
+        open={commandPaletteOpen}
+        query={commandPaletteQuery}
+        onQueryChange={(value) => {
+          setCommandPaletteQuery(value);
+          setCommandPaletteActiveIndex(0);
+        }}
+        items={filteredCommandPaletteItems}
+        activeIndex={commandPaletteActiveIndex}
+        onActiveIndexChange={setCommandPaletteActiveIndex}
+        onClose={closeCommandPalette}
+        onSelectItem={executeCommandPaletteItem}
       />
 
         <div
@@ -2143,15 +2515,22 @@ function App() {
             setSidebarCollapsed(false);
           }}
         >
-          <div className="flex h-full min-h-0 flex-col gap-3.5">
+          <div className="flex h-full min-h-0 flex-col gap-4">
             <LogoRegion collapsed={sidebarCollapsed} onToggleCollapse={() => setSidebarCollapsed((value) => !value)} />
-            <SidebarNav collapsed={sidebarCollapsed} activeSection={activeSection} onNavClick={handleNavClick} />
+            <SidebarNav
+              collapsed={sidebarCollapsed}
+              activeProject={activeProject}
+              activeSection={activeSection}
+              onProjectSwitch={handleProjectSwitch}
+              onNavClick={handleNavClick}
+              onOpenCommandPalette={openCommandPalette}
+            />
             {/* <SidebarSummaryCard collapsed={sidebarCollapsed} scheduleSummary={scheduleSummary} /> */}
           </div>
         </aside>
 
         <main className="min-w-0 px-3 pb-40 pt-3 sm:px-4 sm:pb-36 lg:px-4 lg:pt-3 lg:pb-6">
-          {activeSection !== "guide" && (
+          {showTopbar && (
             <TopbarRegion
               title={topbarTitle}
               tone={topbarTone}
@@ -2161,8 +2540,10 @@ function App() {
             />
           )}
 
-          <section className="content-region mt-2.5 space-y-8 sm:mt-3 sm:space-y-10 lg:mt-5 xl:space-y-14">
-            <div className={cn(activeSection === "guide" && "hidden")}>
+          <section className="content-region mt-4 space-y-10 sm:mt-4 sm:space-y-12 lg:mt-5 xl:space-y-12">
+            {activeProject === "dingtalk" ? (
+              <>
+            {activeSection === "overview" ? (
                 <RegionSection
                   title="监控总览与执行态势"
                   description="用于查看系统状态、关键指标和执行判断。"
@@ -2170,7 +2551,7 @@ function App() {
               <div className="dashboard-layout">
                 <section id="overview" className="dashboard-block dashboard-block--wide fade-up scroll-mt-28" style={{ "--delay": "60ms" }}>
                   <Card className="region-card h-full overflow-hidden">
-                    <CardContent className="region-card-content space-y-5 p-5 pt-5">
+                    <CardContent className="region-card-content space-y-4 p-4 pt-4">
                       {!dashboardReady ? (
                         <Card className="border-border bg-muted/30">
                           <CardContent className="flex items-center gap-2 p-4 text-sm text-muted-foreground">
@@ -2208,7 +2589,7 @@ function App() {
                           <CardContent className="space-y-2">
                             {validationIssues.map((issue) => (
                               <div key={issue.key} className="flex items-start gap-2 text-sm text-foreground">
-                                <TriangleAlert className="mt-0.5 size-4 text-red-500" />
+                                <TriangleAlert className="mt-1 size-4 text-red-500" />
                                 <span>{issue.message}</span>
                               </div>
                             ))}
@@ -2216,15 +2597,15 @@ function App() {
                         </Card>
                       ) : null}
 
-                      <FocusStrip focus={focusState} />
+                      <FocusStrip focus={focusState} quickActions={focusQuickActions} />
 
-                      <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-4">
+                      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
                         {metrics.map((item, index) => (
                           <MetricCard key={item.label} item={item} delay={`${120 + index * 60}ms`} />
                         ))}
                       </div>
 
-                      <div className="grid gap-5 lg:grid-cols-[minmax(0,1.2fr)_minmax(0,0.8fr)]">
+                      <div className="grid gap-4 lg:grid-cols-[minmax(0,1.2fr)_minmax(0,0.8fr)]">
                         <RemoteAdbPanel
                           summary={remoteAdbSummary}
                           pendingAction={pendingAction}
@@ -2264,7 +2645,7 @@ function App() {
                         </Card>
                       </div>
 
-                      <div className="grid gap-5 lg:grid-cols-2">
+                      <div className="grid gap-4 lg:grid-cols-2">
                         <Card className="bg-muted/20">
                           <CardHeader className="pb-4">
                             <CardTitle>现在最该看的信息</CardTitle>
@@ -2274,16 +2655,16 @@ function App() {
                             {!dashboardReady ? (
                               <SectionState
                                 icon={RefreshCw}
-                                title="正在汇总决策信息"
-                                detail="关键指标和风险会在后端状态同步完成后自动生成。"
+                                title="正在生成决策建议"
+                                detail="系统会根据设备、排期和运行状态生成建议。"
                                 loading
                               />
                             ) : apiError ? (
                               <SectionState
                                 icon={TriangleAlert}
                                 tone="warning"
-                                title="当前只能查看离线草稿"
-                                detail="后端离线时无法判断真实风险和最新执行上下文，先恢复连接再做决策。"
+                                title="离线状态下不建议继续操作"
+                                detail="先恢复后端连接，再根据实时状态决定是保存、自检还是启动任务。"
                                 actionLabel="刷新状态"
                                 onAction={() => handleAction("刷新设备状态")}
                               />
@@ -2304,18 +2685,16 @@ function App() {
                             {!dashboardReady ? (
                               <SectionState
                                 icon={RefreshCw}
-                                title="正在生成操作路径"
-                                detail="系统会根据设备、排期和当前运行状态生成更合适的处理顺序。"
+                                title="正在整理操作路径"
+                                detail="系统会根据当前状态给出推荐步骤。"
                                 loading
                               />
                             ) : apiError ? (
                               <SectionState
                                 icon={TriangleAlert}
                                 tone="warning"
-                                title="离线状态下不建议继续操作"
-                                detail="先恢复后端连接，再根据实时状态决定是保存、自检还是启动任务。"
-                                actionLabel="刷新状态"
-                                onAction={() => handleAction("刷新设备状态")}
+                                title="离线状态下仅展示基础步骤"
+                                detail="恢复后端连接后，系统会给出更准确的操作顺序。"
                               />
                             ) : (
                               overviewChecklist.map((item, index) => (
@@ -2342,7 +2721,7 @@ function App() {
                         <CardDescription>先判断当前能不能执行。</CardDescription>
                       </div>
                     </CardHeader>
-                    <CardContent className="region-card-content space-y-5 pt-5">
+                    <CardContent className="region-card-content space-y-4 pt-4">
                       <div className="flex flex-wrap gap-2">
                         {statusTags.map((item) => (
                           <Badge key={item} variant={statusTone(item)} className="rounded-md">
@@ -2360,7 +2739,9 @@ function App() {
                 </section>
               </div>
             </RegionSection>
+            ) : null}
 
+            {activeSection === "actions" ? (
             <RegionSection
               title="任务配置与排期管理"
               description="集中管理动作、排期和关键参数。"
@@ -2374,7 +2755,7 @@ function App() {
                         <CardDescription>优先处理高频动作。</CardDescription>
                       </div>
                     </CardHeader>
-                    <CardContent className="region-card-content space-y-5 pt-5">
+                    <CardContent className="region-card-content space-y-4 pt-4">
                       <SectionState {...actionStatus} />
                       <div className="grid items-stretch gap-4 lg:grid-cols-2">
                         <Card className="flex h-full flex-col bg-muted/20">
@@ -2403,7 +2784,7 @@ function App() {
                           </CardHeader>
                           <CardContent className="grid flex-1 gap-4 md:grid-cols-2">
                             <div className="rounded-xl border bg-background/70 p-4">
-                              <div className="mb-3 space-y-1">
+                              <div className="mb-4 space-y-2">
                                 <p className="text-sm font-medium text-foreground">运行控制</p>
                                 <p className="text-xs leading-6 text-muted-foreground">控制后端调度进程的启动、停止和调试。</p>
                               </div>
@@ -2425,7 +2806,7 @@ function App() {
                             </div>
 
                             <div className="rounded-xl border bg-background/70 p-4">
-                              <div className="mb-3 space-y-1">
+                              <div className="mb-4 space-y-2">
                                 <p className="text-sm font-medium text-foreground">辅助动作</p>
                                 <p className="text-xs leading-6 text-muted-foreground">低频但常用的辅助入口。</p>
                               </div>
@@ -2478,7 +2859,7 @@ function App() {
                         </Button>
                       </div>
                     </CardHeader>
-                    <CardContent className="region-card-content space-y-5 pt-5">
+                    <CardContent className="region-card-content space-y-4 pt-4">
                       <SectionState {...scheduleStatus} />
                       <div className="grid items-stretch gap-4 lg:grid-cols-2">
                         <PendingWindowPanel
@@ -2501,7 +2882,7 @@ function App() {
                         />
                       </div>
 
-                      <div className="grid gap-5 lg:grid-cols-2">
+                      <div className="grid gap-4 lg:grid-cols-2">
                         {windowsData.map((item, index) => (
                           (() => {
                             const currentWindow = getWindowFromDashboard(dashboard, item.name);
@@ -2533,7 +2914,7 @@ function App() {
                                 </div>
                               </div>
                             </CardHeader>
-                            <CardContent className="flex flex-1 flex-col gap-5">
+                            <CardContent className="flex flex-1 flex-col gap-4">
                               <div className="grid gap-4 sm:grid-cols-2">
                                 <TimePickerField
                                   label="开始时间"
@@ -2610,7 +2991,7 @@ function App() {
                         <CardDescription>设备连接、调度节奏和 scrcpy 观察能力都从前台配置。</CardDescription>
                       </div>
                     </CardHeader>
-                    <CardContent className="region-card-content space-y-5 pt-5">
+                    <CardContent className="region-card-content space-y-4 pt-4">
                       <SectionState {...configStatus} />
                       <div className="grid items-stretch gap-4 lg:grid-cols-2 xl:grid-cols-3">
                         {configGroups.map((group) => (
@@ -2626,7 +3007,7 @@ function App() {
                                     {group.summary}
                                   </p>
                                 </div>
-                                <div className="space-y-1.5">
+                                <div className="space-y-2">
                                   <CardTitle>{group.title}</CardTitle>
                                   <CardDescription>{group.description}</CardDescription>
                                 </div>
@@ -2703,7 +3084,9 @@ function App() {
                 </section>
               </div>
             </RegionSection>
+            ) : null}
 
+            {activeSection === "records" ? (
                 <RegionSection
                   title="打卡记录"
                   description="查看历史打卡记录。"
@@ -2727,10 +3110,10 @@ function App() {
                         <span>导出 CSV</span>
                       </Button>
                     </CardHeader>
-                    <CardContent className="region-card-content space-y-4 pt-5">
+                    <CardContent className="region-card-content space-y-4 pt-4">
                       {/* 筛选栏 */}
                       <div className="flex flex-wrap items-end gap-3 rounded-lg border bg-muted/20 p-4">
-                        <div className="space-y-1.5">
+                        <div className="space-y-2">
                           <label className="text-xs font-medium text-muted-foreground">日期</label>
                           <Input
                             type="date"
@@ -2739,12 +3122,12 @@ function App() {
                             className="h-9 w-40"
                           />
                         </div>
-                        <div className="space-y-1.5">
+                        <div className="space-y-2">
                           <label className="text-xs font-medium text-muted-foreground">类型</label>
                           <select
                             value={recordFilter.type}
                             onChange={(e) => { setRecordFilter((f) => ({ ...f, type: e.target.value })); setRecordPage(1); }}
-                            className="h-9 w-32 rounded-md border bg-background px-3 text-sm"
+                            className="h-10 w-32 rounded-md border bg-background px-4 py-2 text-sm"
                           >
                             <option value="">全部</option>
                             {checkinTypeOptions.map((type) => (
@@ -2754,12 +3137,12 @@ function App() {
                             ))}
                           </select>
                         </div>
-                        <div className="space-y-1.5">
+                        <div className="space-y-2">
                           <label className="text-xs font-medium text-muted-foreground">状态</label>
                           <select
                             value={recordFilter.status}
                             onChange={(e) => { setRecordFilter((f) => ({ ...f, status: e.target.value })); setRecordPage(1); }}
-                            className="h-9 w-32 rounded-md border bg-background px-3 text-sm"
+                            className="h-10 w-32 rounded-md border bg-background px-4 py-2 text-sm"
                           >
                             <option value="">全部</option>
                             <option value="成功">成功</option>
@@ -2839,7 +3222,7 @@ function App() {
                               <select
                                 value={recordPageSize}
                                 onChange={(e) => { setRecordPageSize(Number(e.target.value)); setRecordPage(1); }}
-                                className="h-8 w-16 rounded-md border bg-background px-2"
+                                className="h-10 w-20 rounded-md border bg-background px-4 py-2 text-sm"
                               >
                                 <option value={10}>10</option>
                                 <option value={20}>20</option>
@@ -2876,7 +3259,9 @@ function App() {
                 </section>
               </div>
             </RegionSection>
+            ) : null}
 
+            {activeSection === "logs" ? (
             <RegionSection
               title="告警日志与通知中心"
               description="统一查看提醒、告警和执行日志。"
@@ -2890,7 +3275,7 @@ function App() {
                         <CardDescription>先处理风险项。</CardDescription>
                       </div>
                     </CardHeader>
-                    <CardContent className="region-card-content space-y-5 pt-5">
+                    <CardContent className="region-card-content space-y-4 pt-4">
                       {!dashboardReady ? (
                         <SectionState
                           icon={RefreshCw}
@@ -2934,7 +3319,7 @@ function App() {
                       <CardTitle>日志</CardTitle>
                       <CardDescription>只看最近动作和结果。</CardDescription>
                     </CardHeader>
-                    <CardContent className="region-card-content space-y-3">
+                    <CardContent className="region-card-content space-y-4">
                       {!dashboardReady ? (
                         <SectionState
                           icon={RefreshCw}
@@ -2972,7 +3357,7 @@ function App() {
                       <CardTitle>时间线</CardTitle>
                       <CardDescription>快速回看今天发生了什么。</CardDescription>
                     </CardHeader>
-                    <CardContent className="region-card-content space-y-0">
+                    <CardContent className="region-card-content space-y-2">
                       {!dashboardReady ? (
                         <SectionState
                           icon={RefreshCw}
@@ -3015,7 +3400,7 @@ function App() {
                       <CardTitle>保护规则</CardTitle>
                       <CardDescription>保存前再看这一组。</CardDescription>
                     </CardHeader>
-                    <CardContent className="region-card-content space-y-3">
+                    <CardContent className="region-card-content space-y-4">
                       {guards.map(([label, value, emphasized]) => (
                         <GuardRow key={label} label={label} value={value} emphasized={emphasized} />
                       ))}
@@ -3023,12 +3408,11 @@ function App() {
                   </Card>
                 </section>
               </div>
-              <div className="pt-1 text-center text-xs leading-6 text-muted-foreground">
+              <div className="pt-4 text-center text-xs leading-6 text-muted-foreground">
                 版本 {APP_VERSION}
               </div>
             </RegionSection>
-
-            </div>
+            ) : null}
 
             {activeSection === "guide" ? (
               <RegionSection
@@ -3037,7 +3421,7 @@ function App() {
               >
                 <div className="dashboard-layout">
                   <section id="guide" className="dashboard-block dashboard-block--wide fade-up scroll-mt-28" style={{ "--delay": "140ms" }}>
-                    <div className="p-4 pt-4 md:p-6 md:pt-6">
+                    <div className="pt-4 md:pt-6">
                       <article className="guide-doc-shell">
                           <nav className="guide-doc-breadcrumb" aria-label="使用说明路径">
                             <span className="guide-doc-crumb">Documentation</span>
@@ -3142,7 +3526,7 @@ function App() {
                             </p>
 
                             <article className="overflow-hidden rounded-2xl border border-red-200/70 bg-red-50/70 dark:border-red-900/40 dark:bg-red-950/20">
-                              <div className="border-b border-red-200/70 px-5 py-4 dark:border-red-900/40">
+                              <div className="border-b border-red-200/70 px-4 py-4 dark:border-red-900/40">
                                 <div className="flex flex-wrap items-center gap-2">
                                   <Badge variant="destructive" className="rounded-md">先确认</Badge>
                                   <h3 className="text-base font-semibold">云服务器装上 ADB，不等于云服务器能看到你的手机</h3>
@@ -3151,7 +3535,7 @@ function App() {
                                   在线安装 ADB 只解决依赖安装问题。要让设备真正出现在控制台里，手机必须接在运行 ADB 的那台机器上，或者已经配置好远程 ADB/TCP。
                                 </p>
                               </div>
-                              <div className="px-5 py-4">
+                              <div className="px-4 py-4">
                                 <ul className="guide-doc-list space-y-3">
                                   <li><strong>可行：</strong> 后端跑在本机，手机通过 USB 插在本机。</li>
                                   <li><strong>可行：</strong> 后端跑在云服务器，但手机接在该服务器可访问的设备连接器环境，或已打通远程 ADB。</li>
@@ -3307,7 +3691,7 @@ function App() {
                             </div>
 
                             <article className="mt-4 overflow-hidden rounded-2xl border border-amber-200/70 bg-amber-50/70 dark:border-amber-900/40 dark:bg-amber-950/20">
-                              <div className="border-b border-amber-200/70 px-5 py-4 dark:border-amber-900/40">
+                              <div className="border-b border-amber-200/70 px-4 py-4 dark:border-amber-900/40">
                                 <div className="flex flex-wrap items-center gap-2">
                                   <Badge variant="warning" className="rounded-md">高频问题</Badge>
                                   <h3 className="text-base font-semibold">连接失败时先看这里</h3>
@@ -3316,7 +3700,7 @@ function App() {
                                   大多数连接问题都集中在数据线、USB 模式、授权弹窗、多设备绑定，以及远程 ADB 目标不可达这几类场景。
                                 </p>
                               </div>
-                              <div className="px-5 py-4">
+                              <div className="px-4 py-4">
                                 <ul className="guide-doc-list space-y-3">
                                   <li><strong>看不到设备：</strong> 先换数据线、USB 口，确认手机不是“仅充电”模式。</li>
                                   <li><strong>设备显示 unauthorized：</strong> 说明手机还没点授权，解锁屏幕后重新插拔或重新授权。</li>
@@ -3399,10 +3783,17 @@ function App() {
                 </div>
               </RegionSection>
             ) : null}
+              </>
+            ) : (
+              <PlaybackProjectPanel
+                activeSection={activeSection}
+                onNavigate={(sectionId) => handleNavClick(undefined, sectionId)}
+              />
+            )}
           </section>
         </main>
 
-        {activeSection !== "guide" ? (
+        {showBottomStickyMenu ? (
           <BottomStickyMenu
             activeSection={activeSection}
             pendingAction={pendingAction}
@@ -3427,7 +3818,7 @@ function ActionButton({ icon: Icon, children, isPending = false, className, size
 
 function ActionTile({ item, isPending = false, className, ...props }) {
   return (
-    <div className={cn("rounded-xl border bg-background p-3", className)}>
+    <div className={cn("rounded-xl border bg-background p-4", className)}>
       <div className="flex h-full flex-col gap-3">
         <div className="space-y-2">
           <div className="flex items-center gap-2">
@@ -3453,11 +3844,11 @@ function ActionTile({ item, isPending = false, className, ...props }) {
   );
 }
 
-function FocusStrip({ focus }) {
+function FocusStrip({ focus, quickActions = [] }) {
   const tone = toneClasses(focus.tone);
   return (
     <Card className={cn("overflow-hidden", tone.panel)}>
-      <CardContent className="space-y-4 p-5">
+      <CardContent className="space-y-4 p-4">
         <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
           <div className="space-y-2">
             <div className="flex items-center gap-2">
@@ -3473,9 +3864,24 @@ function FocusStrip({ focus }) {
           </div>
         </div>
 
+        {quickActions.length ? (
+          <div className="flex flex-wrap items-center gap-2">
+            {quickActions.map((action) => (
+              <Button
+                key={action.key}
+                variant={action.variant ?? "outline"}
+                size="sm"
+                onClick={action.onClick}
+              >
+                {action.label}
+              </Button>
+            ))}
+          </div>
+        ) : null}
+
         <div className="flex flex-wrap gap-2">
           {focus.chips.map((chip) => (
-            <div key={chip} className={cn("rounded-md px-3 py-1.5 text-sm", tone.soft)}>
+            <div key={chip} className={cn("rounded-md px-3 py-2 text-sm", tone.soft)}>
               {chip}
             </div>
           ))}
@@ -3489,8 +3895,8 @@ function GuideAccordionItem({ title, description, open, onToggle, children }) {
   return (
     <article
       className={cn(
-        "overflow-hidden rounded-2xl border bg-background/90 shadow-sm transition-all duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]",
-        open ? "border-border shadow-sm" : "border-border/70",
+        "overflow-hidden rounded-2xl border bg-background/90 transition-all duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]",
+        open ? "border-border" : "border-border/70",
       )}
     >
       <button
@@ -3498,13 +3904,13 @@ function GuideAccordionItem({ title, description, open, onToggle, children }) {
         onClick={onToggle}
         aria-expanded={open}
         className={cn(
-          "flex w-full items-center justify-between gap-3 px-5 py-4 text-left transition-colors duration-300",
+          "flex w-full items-center justify-between gap-3 px-4 py-4 text-left transition-colors duration-300",
           open ? "bg-muted/35" : "hover:bg-muted/25",
         )}
       >
         <div>
           <h3>{title}</h3>
-          <p className="mt-1 text-sm text-muted-foreground">{description}</p>
+          <p className="mt-2 text-sm text-muted-foreground">{description}</p>
         </div>
         <ChevronRight
           className={cn(
@@ -3521,7 +3927,7 @@ function GuideAccordionItem({ title, description, open, onToggle, children }) {
         )}
       >
         <div className="overflow-hidden">
-          <div className="border-t px-5 py-4">{children}</div>
+          <div className="border-t px-4 py-4">{children}</div>
         </div>
       </div>
     </article>
@@ -3563,41 +3969,156 @@ function LogoRegion({ collapsed, onToggleCollapse }) {
   );
 }
 
-function SidebarNav({ collapsed, activeSection, onNavClick }) {
-  const guideNavItem = navItems.find((item) => item.id === "guide");
-  const primaryNavItems = navItems.filter((item) => item.id !== "guide");
+function SidebarNav({
+  collapsed,
+  activeProject,
+  activeSection,
+  onProjectSwitch,
+  onNavClick,
+  onOpenCommandPalette,
+}) {
+  const dingtalkFeatureIds = DINGTALK_FEATURE_GROUP_NAV.items.map((item) => item.id);
+  const isDingtalkFeatureActive = dingtalkFeatureIds.includes(activeSection);
+  const [featureOpen, setFeatureOpen] = useState(() => isDingtalkFeatureActive);
+  const [navQuery, setNavQuery] = useState("");
+  const [searchPanelOpen, setSearchPanelOpen] = useState(false);
+  const [recentsOpen, setRecentsOpen] = useState(false);
+  const [recentSectionIds, setRecentSectionIds] = useState(() => {
+    if (typeof window === "undefined") return [];
+    try {
+      const raw = window.localStorage.getItem(SIDEBAR_RECENT_SECTIONS_KEY);
+      if (!raw) return [];
+      const parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed)) return [];
+      return parsed
+        .filter((item) => typeof item === "string" && SIDEBAR_NAV_ITEM_INDEX[item])
+        .slice(0, SIDEBAR_RECENT_LIMIT);
+    } catch {
+      return [];
+    }
+  });
+  const normalizedNavQuery = navQuery.trim().toLowerCase();
+  const isFiltering = normalizedNavQuery.length > 0;
 
-  const renderNavItem = (item, className = "") => {
+  useEffect(() => {
+    if (activeProject === "dingtalk" && isDingtalkFeatureActive) setFeatureOpen(true);
+  }, [activeProject, isDingtalkFeatureActive]);
+
+  useEffect(() => {
+    if (!collapsed) return;
+    if (navQuery) setNavQuery("");
+    if (searchPanelOpen) setSearchPanelOpen(false);
+  }, [collapsed, navQuery, searchPanelOpen]);
+
+  const focusSearchInput = useCallback(() => {
+    if (collapsed) return;
+    setSearchPanelOpen(true);
+    window.requestAnimationFrame(() => {
+      const input = document.getElementById(SIDEBAR_NAV_SEARCH_INPUT_ID);
+      input?.focus();
+      input?.select?.();
+    });
+  }, [collapsed]);
+
+  useEffect(() => {
+    if (activeProject === "dingtalk" && isFiltering) setFeatureOpen(true);
+  }, [activeProject, isFiltering]);
+
+  useEffect(() => {
+    if (!SIDEBAR_NAV_ITEM_INDEX[activeSection]) return;
+    setRecentSectionIds((current) => {
+      const next = [activeSection, ...current.filter((item) => item !== activeSection)].slice(
+        0,
+        SIDEBAR_RECENT_LIMIT,
+      );
+      if (typeof window !== "undefined") {
+        window.localStorage.setItem(SIDEBAR_RECENT_SECTIONS_KEY, JSON.stringify(next));
+      }
+      return next;
+    });
+  }, [activeSection]);
+
+  const matchesQuery = useCallback(
+    (item) => {
+      if (!isFiltering) return true;
+      const haystack = `${item.label} ${item.id}`.toLowerCase();
+      return haystack.includes(normalizedNavQuery);
+    },
+    [isFiltering, normalizedNavQuery],
+  );
+
+  const filteredDingtalkPrimaryItems = DINGTALK_PRIMARY_STANDALONE_NAV_ITEMS.filter(matchesQuery);
+  const filteredDingtalkFeatureItems = DINGTALK_FEATURE_GROUP_NAV.items.filter(matchesQuery);
+  const filteredPlaybackItems = PLAYBACK_NAV_ITEMS.filter(matchesQuery);
+  const showGuideItem = matchesQuery(GUIDE_NAV_ITEM);
+  const filteredRecentSectionIds = recentSectionIds.filter((id) => {
+    const item = SIDEBAR_NAV_ITEM_INDEX[id];
+    if (!item) return false;
+    return matchesQuery(item);
+  });
+  const hasSearchResult =
+    activeProject === "dingtalk"
+      ? filteredDingtalkPrimaryItems.length > 0 ||
+        filteredDingtalkFeatureItems.length > 0 ||
+        showGuideItem ||
+        filteredRecentSectionIds.length > 0
+      : filteredPlaybackItems.length > 0 || filteredRecentSectionIds.length > 0;
+
+  const quickActionItems =
+    activeProject === "dingtalk"
+      ? [
+          { id: "overview", label: "运行总览", icon: Gauge, shortcut: "⌘1" },
+          { id: "search", label: "搜索", icon: Search, shortcut: "⌘K", type: "search" },
+          { id: "guide", label: "使用说明", icon: CircleHelp, shortcut: "⌘/" },
+        ]
+      : [
+          { id: "playback-devices", label: "设备管理", icon: Smartphone, shortcut: "⌘1" },
+          { id: "search", label: "搜索", icon: Search, shortcut: "⌘K", type: "search" },
+          { id: "playback-dashboard", label: "运行看板", icon: ListChecks, shortcut: "⌘2" },
+        ];
+
+  const renderNavItem = (item, options = {}) => {
     const Icon = item.icon;
-    const isGuideItem = item.id === "guide";
+    const {
+      active = activeSection === item.id,
+      muted = false,
+      isGuide = false,
+      noHover = false,
+      onClick = (event) => onNavClick(event, item.id),
+    } = options;
+
     return (
       <a
         key={item.id}
         href={`#${item.id}`}
         data-sidebar-item="true"
-        data-sidebar-icon-animate={isGuideItem ? "false" : "true"}
-        data-guide-item={isGuideItem ? "true" : "false"}
-        data-guide-active={isGuideItem && activeSection === item.id ? "true" : "false"}
+        data-sidebar-icon-animate={noHover ? "false" : "true"}
+        data-guide-item={isGuide ? "true" : "false"}
+        data-guide-active={isGuide && active ? "true" : "false"}
         data-sidebar-cursor-block="true"
         title={item.label}
         aria-label={item.label}
+        aria-current={active ? "page" : undefined}
         className={cn(
-          "flex h-10 w-full items-center gap-2 overflow-hidden rounded-md border px-2 text-sm leading-6 transition-[width,padding,gap,background-color,color,border-color] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]",
+          "flex h-10 w-full items-center gap-2 overflow-hidden rounded-md border px-2 text-sm leading-6 transition-[width,padding,gap,background-color,color,border-color] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] focus:outline-none focus-visible:ring-2 focus-visible:ring-ring",
           collapsed && "lg:h-10 lg:w-[var(--sidebar-inner-size)] lg:justify-center lg:px-0 lg:gap-0",
-          isGuideItem
-            ? activeSection === item.id
+          isGuide
+            ? active
               ? "border-transparent bg-transparent text-black dark:text-white hover:border-transparent hover:bg-transparent hover:text-black dark:hover:text-white"
               : "border-transparent text-muted-foreground hover:border-transparent hover:bg-transparent"
-            : activeSection === item.id
+            : active
               ? "border-border bg-accent text-accent-foreground"
-              : "border-transparent text-muted-foreground hover:border-border hover:bg-accent hover:text-accent-foreground",
-          className,
+              : noHover
+                ? "border-transparent text-muted-foreground"
+                : muted
+                  ? "border-transparent text-muted-foreground hover:border-border hover:bg-accent hover:text-accent-foreground"
+                  : "border-transparent text-muted-foreground hover:border-border hover:bg-accent hover:text-accent-foreground",
         )}
-        onClick={(event) => onNavClick(event, item.id)}
+        onClick={onClick}
       >
-        <Icon className="size-4.5 shrink-0" data-guide-hotspot={isGuideItem ? "true" : undefined} />
+        <Icon className="size-4.5 shrink-0" data-guide-hotspot={isGuide ? "true" : undefined} />
         <span
-          data-guide-hotspot={isGuideItem ? "true" : undefined}
+          data-guide-hotspot={isGuide ? "true" : undefined}
           className={cn(
             "font-medium whitespace-nowrap transition-[max-width,opacity,transform] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]",
             collapsed
@@ -3611,6 +4132,89 @@ function SidebarNav({ collapsed, activeSection, onNavClick }) {
     );
   };
 
+  const renderQuickActionItem = (item) => {
+    const Icon = item.icon;
+    const isSearch = item.type === "search";
+    const isActive = !isSearch && activeSection === item.id;
+
+    return (
+      <button
+        key={item.id}
+        type="button"
+        data-sidebar-item="true"
+        data-sidebar-icon-animate="false"
+        data-sidebar-cursor-block="true"
+        title={item.label}
+        aria-label={item.label}
+        aria-current={isActive ? "page" : undefined}
+        className={cn(
+          "group flex h-8 w-full items-center gap-3 rounded-lg px-3 text-sm transition-colors",
+          collapsed ? "lg:h-10 lg:w-[var(--sidebar-inner-size)] lg:justify-center lg:px-0" : "justify-start",
+          isActive
+            ? "bg-accent text-accent-foreground"
+            : "text-muted-foreground hover:bg-muted/40 hover:text-foreground",
+        )}
+        onClick={(event) => {
+          if (isSearch) {
+            event.preventDefault();
+            if (onOpenCommandPalette) {
+              onOpenCommandPalette();
+            } else {
+              focusSearchInput();
+            }
+            return;
+          }
+          onNavClick(event, item.id);
+        }}
+      >
+        <Icon className="size-4 shrink-0" />
+        <span
+          className={cn(
+            "truncate text-sm transition-[max-width,opacity] duration-150",
+            collapsed ? "lg:pointer-events-none lg:absolute lg:max-w-0 lg:opacity-0" : "max-w-[10rem] opacity-100",
+          )}
+        >
+          {item.label}
+        </span>
+        {!collapsed ? (
+          <span className="ml-auto text-xs text-muted-foreground opacity-0 transition-opacity duration-100 group-hover:opacity-100">
+            {item.shortcut}
+          </span>
+        ) : null}
+      </button>
+    );
+  };
+
+  const renderRecentItem = (id) => {
+    const item = SIDEBAR_NAV_ITEM_INDEX[id];
+    if (!item) return null;
+    const Icon = item.icon;
+    const isActive = activeSection === id;
+    const projectTag = PLAYBACK_SECTIONS.has(id) ? "刷视频" : "钉钉";
+    return (
+      <a
+        key={id}
+        href={`#${id}`}
+        data-sidebar-item="true"
+        data-sidebar-icon-animate="true"
+        data-sidebar-cursor-block="true"
+        className={cn(
+          "group flex h-8 w-full items-center gap-2 rounded-md px-2 text-sm transition-colors",
+          isActive
+            ? "bg-accent text-accent-foreground"
+            : "text-muted-foreground hover:bg-muted/40 hover:text-foreground",
+        )}
+        onClick={(event) => onNavClick(event, id)}
+      >
+        <Icon className="size-3.5 shrink-0" />
+        <span className="truncate text-sm">{item.label}</span>
+        <span className="ml-auto rounded-full bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground opacity-0 transition-opacity duration-100 group-hover:opacity-100">
+          {projectTag}
+        </span>
+      </a>
+    );
+  };
+
   return (
     <nav
       className={cn(
@@ -3619,16 +4223,1012 @@ function SidebarNav({ collapsed, activeSection, onNavClick }) {
       )}
       style={{ "--delay": "100ms" }}
     >
-      <div className={cn("space-y-4", collapsed && "lg:flex lg:w-full lg:flex-col lg:items-center")}>
-        {primaryNavItems.map((item) => renderNavItem(item))}
-      </div>
+      <div className={cn("flex h-full min-h-0 flex-col gap-3", collapsed && "lg:w-[var(--sidebar-inner-size)]")}>
+        <div className="space-y-1">{quickActionItems.map((item) => renderQuickActionItem(item))}</div>
 
-      {guideNavItem ? (
-        <div className={cn("mt-auto w-full border-t border-border/70 pt-4", collapsed && "lg:flex lg:justify-center")}>
-          {renderNavItem(guideNavItem)}
+        {!collapsed && searchPanelOpen ? (
+          <div className="space-y-1">
+            <div className="relative">
+              <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                id={SIDEBAR_NAV_SEARCH_INPUT_ID}
+                value={navQuery}
+                onChange={(event) => setNavQuery(event.target.value)}
+                placeholder="搜索导航（⌘/Ctrl + K）"
+                aria-label="搜索导航"
+                className="h-8 rounded-md border-border/70 bg-background pl-8 pr-8 text-xs"
+              />
+              <button
+                type="button"
+                onClick={() => {
+                  setNavQuery("");
+                  setSearchPanelOpen(false);
+                }}
+                className={cn(
+                  "absolute right-1 top-1/2 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground",
+                  navQuery ? "opacity-100" : "opacity-0",
+                )}
+                aria-label="关闭搜索"
+                title="关闭搜索"
+              >
+                <X className="size-3.5" />
+              </button>
+            </div>
+            <p className="px-1 text-[11px] text-muted-foreground">输入关键词快速定位功能项。</p>
+          </div>
+        ) : null}
+
+        <Separator />
+
+        <div className={cn("flex min-h-0 flex-1 flex-col gap-4", collapsed && "lg:w-full lg:items-center")}>
+        <div className="space-y-2">
+          {!collapsed ? (
+            <p className="px-1 text-[11px] uppercase tracking-[0.14em] text-muted-foreground">项目</p>
+          ) : null}
+          <div className={cn("space-y-2", collapsed && "lg:w-[var(--sidebar-inner-size)]")}>
+          {PROJECT_NAV_ITEMS.map((item) => {
+            const isActive = activeProject === item.id;
+            return renderNavItem(item, {
+              active: isActive,
+              muted: !isActive,
+              noHover: true,
+              onClick: (event) => {
+                event.preventDefault();
+                onProjectSwitch(item.id);
+              },
+            });
+          })}
+          </div>
         </div>
-      ) : null}
+
+          <Separator />
+
+          <div className="flex min-h-0 flex-1 flex-col overflow-y-auto pr-1">
+            {activeProject === "dingtalk" ? (
+              <div className={cn("space-y-4", collapsed && "lg:w-[var(--sidebar-inner-size)]")}>
+                {!collapsed ? (
+                  <p className="px-1 text-[11px] uppercase tracking-[0.14em] text-muted-foreground">导航</p>
+                ) : null}
+
+                {filteredDingtalkPrimaryItems.map((item) => renderNavItem(item))}
+
+                {!isFiltering || filteredDingtalkFeatureItems.length > 0 ? (
+                  <div className={cn("space-y-2", collapsed && "lg:w-[var(--sidebar-inner-size)]")}>
+                    <button
+                      type="button"
+                      data-sidebar-item="true"
+                      data-sidebar-icon-animate="false"
+                      data-sidebar-cursor-block="true"
+                      title={DINGTALK_FEATURE_GROUP_NAV.label}
+                      aria-label={DINGTALK_FEATURE_GROUP_NAV.label}
+                      aria-expanded={!collapsed ? featureOpen : undefined}
+                      className={cn(
+                        "flex h-10 w-full items-center gap-2 overflow-hidden rounded-md border px-2 text-sm leading-6 transition-[width,padding,gap,background-color,color,border-color] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] focus:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                        collapsed && "lg:h-10 lg:w-[var(--sidebar-inner-size)] lg:justify-center lg:px-0 lg:gap-0",
+                        isDingtalkFeatureActive
+                          ? "border-border bg-accent text-accent-foreground"
+                          : "border-transparent text-muted-foreground",
+                      )}
+                      onClick={(event) => {
+                        if (collapsed) {
+                          onNavClick(event, DINGTALK_FEATURE_GROUP_NAV.items[0].id);
+                          return;
+                        }
+                        setFeatureOpen((value) => !value);
+                      }}
+                    >
+                      <DINGTALK_FEATURE_GROUP_NAV.icon className="size-4.5 shrink-0" />
+                      <span
+                        className={cn(
+                          "font-medium whitespace-nowrap transition-[max-width,opacity,transform] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]",
+                          collapsed
+                            ? "lg:pointer-events-none lg:absolute lg:max-w-0 lg:opacity-0 lg:-translate-x-1"
+                            : "lg:max-w-[11rem] lg:opacity-100 lg:translate-x-0",
+                        )}
+                      >
+                        {DINGTALK_FEATURE_GROUP_NAV.label}
+                      </span>
+                      {!collapsed ? (
+                        <div className="ml-auto flex items-center gap-1.5">
+                          <span className="inline-flex min-w-5 items-center justify-center rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-semibold text-muted-foreground">
+                            {filteredDingtalkFeatureItems.length}
+                          </span>
+                          <ChevronDown
+                            className={cn(
+                              "size-4 shrink-0 text-muted-foreground transition-transform duration-200 ease-out",
+                              featureOpen && "rotate-180",
+                            )}
+                          />
+                        </div>
+                      ) : null}
+                    </button>
+
+                    {!collapsed ? (
+                      <div
+                        className={cn(
+                          "grid transition-[grid-template-rows,opacity] duration-200 ease-out",
+                          featureOpen ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0",
+                        )}
+                      >
+                        <div className="overflow-hidden">
+                          <div className="ml-3 space-y-2 border-l border-border/70 pl-3">
+                            {filteredDingtalkFeatureItems.map((item) => {
+                              const ItemIcon = item.icon;
+                              const itemActive = activeSection === item.id;
+                              return (
+                                <a
+                                  key={item.id}
+                                  href={`#${item.id}`}
+                                  data-sidebar-item="true"
+                                  data-sidebar-icon-animate="true"
+                                  data-sidebar-cursor-block="true"
+                                  title={item.label}
+                                  aria-label={item.label}
+                                  aria-current={itemActive ? "page" : undefined}
+                                  className={cn(
+                                    "flex h-9 w-full items-center gap-2 rounded-md border px-2 text-sm leading-6 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                                    itemActive
+                                      ? "border-border bg-accent text-accent-foreground"
+                                      : "border-transparent text-muted-foreground hover:border-border hover:bg-accent hover:text-accent-foreground",
+                                  )}
+                                  onClick={(event) => onNavClick(event, item.id)}
+                                >
+                                  <ItemIcon className="size-4 shrink-0" />
+                                  <span className="font-medium">{item.label}</span>
+                                </a>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      </div>
+                    ) : null}
+                  </div>
+                ) : null}
+
+                {isFiltering && !hasSearchResult ? (
+                  <div className="rounded-md border border-dashed border-border/70 bg-muted/20 p-3 text-xs text-muted-foreground">
+                    未找到匹配导航，可尝试更换关键词。
+                  </div>
+                ) : null}
+
+              </div>
+            ) : (
+              <div className={cn("space-y-2", collapsed && "lg:w-[var(--sidebar-inner-size)]")}>
+                {!collapsed ? (
+                  <p className="px-1 text-[11px] uppercase tracking-[0.14em] text-muted-foreground">导航</p>
+                ) : null}
+                {filteredPlaybackItems.map((item) => renderNavItem(item))}
+                {isFiltering && !hasSearchResult ? (
+                  <div className="rounded-md border border-dashed border-border/70 bg-muted/20 p-3 text-xs text-muted-foreground">
+                    未找到匹配导航，可尝试更换关键词。
+                  </div>
+                ) : null}
+              </div>
+            )}
+          </div>
+
+          {!collapsed ? (
+            <div className="border-t border-border/70 pt-3">
+              <button
+                type="button"
+                className="group flex w-full items-center justify-between rounded-md px-2 py-1.5 text-left text-xs text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground"
+                onClick={() => setRecentsOpen((value) => !value)}
+                aria-expanded={recentsOpen}
+                aria-label="切换最近访问分组"
+              >
+                <span className="font-medium uppercase tracking-[0.12em]">最近访问</span>
+                <span className="text-[11px] opacity-80 transition-opacity group-hover:opacity-100">
+                  {recentsOpen ? "隐藏" : "显示"}
+                </span>
+              </button>
+              {recentsOpen ? (
+                <div className="mt-1 space-y-1">
+                  {filteredRecentSectionIds.length > 0 ? (
+                    filteredRecentSectionIds.map((id) => renderRecentItem(id))
+                  ) : (
+                    <p className="px-2 py-1 text-xs text-muted-foreground">暂无最近访问</p>
+                  )}
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+
+          {activeProject === "dingtalk" ? (
+            <div className={cn("mt-auto w-full border-t border-border/70 pt-3", collapsed && "lg:flex lg:justify-center")}>
+              {renderNavItem(GUIDE_NAV_ITEM, {
+                isGuide: true,
+                noHover: true,
+                active: activeSection === GUIDE_NAV_ITEM.id,
+              })}
+            </div>
+          ) : null}
+        </div>
+      </div>
     </nav>
+  );
+}
+
+function CommandPalette({
+  moduleId,
+  moduleName,
+  open,
+  query,
+  onQueryChange,
+  items,
+  activeIndex,
+  onActiveIndexChange,
+  onClose,
+  onSelectItem,
+}) {
+  if (!open) return null;
+
+  let previousGroup = "";
+
+  return (
+    <div
+      id={moduleId}
+      data-module={moduleId}
+      data-module-name={moduleName}
+      className="fixed inset-0 z-[120] flex items-start justify-center bg-black/45 px-3 pt-14 backdrop-blur-sm sm:px-4 sm:pt-16"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+    >
+      <div className="w-full max-w-2xl overflow-hidden rounded-2xl border border-border bg-background shadow-2xl">
+        <div className="border-b border-border p-4">
+          <div className="relative">
+            <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              autoFocus
+              value={query}
+              onChange={(event) => onQueryChange(event.target.value)}
+              placeholder="搜索页面、操作命令（⌘/Ctrl + K）"
+              aria-label="命令面板搜索"
+              className="h-10 rounded-lg border-border bg-background/80 pl-10 pr-12 text-sm"
+            />
+            <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 rounded border border-border/80 px-2 py-0.5 text-xs leading-none text-muted-foreground">
+              Esc
+            </span>
+          </div>
+        </div>
+
+        <div className="max-h-[65vh] overflow-y-auto p-3">
+          {items.length > 0 ? (
+            <div className="space-y-1">
+              {items.map((item, index) => {
+                const Icon = item.icon;
+                const isActive = index === activeIndex;
+                const showGroup = item.group !== previousGroup;
+                previousGroup = item.group;
+
+                return (
+                  <div key={item.id} className="space-y-1">
+                    {showGroup ? (
+                      <p className="px-3 pt-2 text-xs font-medium uppercase tracking-[0.12em] text-muted-foreground">
+                        {item.group}
+                      </p>
+                    ) : null}
+                    <button
+                      type="button"
+                      className={cn(
+                        "flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left transition-colors",
+                        isActive
+                          ? "bg-accent text-accent-foreground"
+                          : "text-foreground hover:bg-muted/40",
+                      )}
+                      onMouseEnter={() => onActiveIndexChange(index)}
+                      onClick={() => onSelectItem(item)}
+                    >
+                      <Icon className="size-4 shrink-0 text-muted-foreground" />
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-sm font-medium">{item.label}</p>
+                        {item.hint ? (
+                          <p className="truncate text-xs text-muted-foreground">{item.hint}</p>
+                        ) : null}
+                      </div>
+                      {item.shortcut ? (
+                        <span className="rounded border border-border/70 px-2 py-0.5 text-xs leading-none text-muted-foreground">
+                          {item.shortcut}
+                        </span>
+                      ) : null}
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <div className="px-4 py-8 text-center text-sm text-muted-foreground">
+              未找到匹配命令，试试输入“总览”、“自检”、“日志”。
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function formatPlaybackDuration(ms) {
+  const totalSeconds = Math.floor(Math.max(0, Number(ms) || 0) / 1000);
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  if (hours > 0) return `${hours}h ${minutes}m ${seconds}s`;
+  if (minutes > 0) return `${minutes}m ${seconds}s`;
+  return `${seconds}s`;
+}
+
+function formatPlaybackDateTime(input) {
+  if (!input) return "-";
+  const date = new Date(input);
+  if (Number.isNaN(date.getTime())) return "-";
+  return date.toLocaleString("zh-CN", { hour12: false });
+}
+
+function PlaybackProjectPanel({ activeSection, onNavigate }) {
+  const [devices, setDevices] = useState([]);
+  const [apps, setApps] = useState([]);
+  const [selectedDevice, setSelectedDevice] = useState("");
+  const [selectedApps, setSelectedApps] = useState([]);
+  const [appKeyword, setAppKeyword] = useState("");
+  const [isAppDropdownOpen, setIsAppDropdownOpen] = useState(false);
+  const [loadingDevices, setLoadingDevices] = useState(false);
+  const [loadingApps, setLoadingApps] = useState(false);
+  const [startingProgram, setStartingProgram] = useState(false);
+  const [unlockingDevice, setUnlockingDevice] = useState(false);
+  const [unlockPattern, setUnlockPattern] = useState("2589");
+  const [clearCredentialAfterVerify, setClearCredentialAfterVerify] = useState(false);
+  const [browseRoundsMin, setBrowseRoundsMin] = useState(6);
+  const [browseRoundsMax, setBrowseRoundsMax] = useState(10);
+  const [browseWaitMinSeconds, setBrowseWaitMinSeconds] = useState(3.2);
+  const [browseWaitMaxSeconds, setBrowseWaitMaxSeconds] = useState(8.8);
+  const [browseLikeChancePercent, setBrowseLikeChancePercent] = useState(18);
+  const [browseConfigText, setBrowseConfigText] = useState("");
+  const [unlockText, setUnlockText] = useState("");
+  const [actionText, setActionText] = useState("");
+  const [errorText, setErrorText] = useState("");
+
+  const [dashboardData, setDashboardData] = useState(null);
+  const [loadingDashboard, setLoadingDashboard] = useState(false);
+  const [clearingLogs, setClearingLogs] = useState(false);
+  const [exportingLogs, setExportingLogs] = useState(false);
+  const [stoppingProgram, setStoppingProgram] = useState(false);
+  const [stopRequested, setStopRequested] = useState(false);
+
+  const appSelectorRef = useRef(null);
+
+  const loadPlaybackDevices = useCallback(async () => {
+    setLoadingDevices(true);
+    setErrorText("");
+    try {
+      const list = await fetchPlaybackDevices();
+      setDevices(list);
+      if (!selectedDevice) {
+        const online = list.find((item) => item.state === "device");
+        setSelectedDevice(online?.serial || list[0]?.serial || "");
+      } else if (!list.some((item) => item.serial === selectedDevice)) {
+        const online = list.find((item) => item.state === "device");
+        setSelectedDevice(online?.serial || list[0]?.serial || "");
+      }
+    } catch (error) {
+      setErrorText(error instanceof Error ? error.message : "加载设备失败");
+    } finally {
+      setLoadingDevices(false);
+    }
+  }, [selectedDevice]);
+
+  useEffect(() => {
+    loadPlaybackDevices();
+  }, [loadPlaybackDevices]);
+
+  useEffect(() => {
+    if (!selectedDevice) {
+      setApps([]);
+      setSelectedApps([]);
+      return;
+    }
+
+    let cancelled = false;
+    const loadApps = async () => {
+      setLoadingApps(true);
+      setErrorText("");
+      try {
+        const appList = await fetchPlaybackDeviceApps(selectedDevice);
+        if (cancelled) return;
+        setApps(appList);
+        setSelectedApps([]);
+        setAppKeyword("");
+        setIsAppDropdownOpen(false);
+      } catch (error) {
+        if (cancelled) return;
+        setErrorText(error instanceof Error ? error.message : "加载应用失败");
+        setApps([]);
+        setSelectedApps([]);
+      } finally {
+        if (!cancelled) setLoadingApps(false);
+      }
+    };
+
+    loadApps();
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedDevice]);
+
+  useEffect(() => {
+    setSelectedApps((current) =>
+      current.filter((pkg) => apps.some((app) => app.packageName === pkg)),
+    );
+  }, [apps]);
+
+  useEffect(() => {
+    if (!isAppDropdownOpen) return undefined;
+    const onOutsideClick = (event) => {
+      if (appSelectorRef.current && !appSelectorRef.current.contains(event.target)) {
+        setIsAppDropdownOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", onOutsideClick);
+    return () => document.removeEventListener("mousedown", onOutsideClick);
+  }, [isAppDropdownOpen]);
+
+  const loadDashboard = useCallback(
+    async ({ silent = false } = {}) => {
+      if (!selectedDevice) return;
+      if (!silent) setLoadingDashboard(true);
+      try {
+        const next = await fetchPlaybackProgramDashboard(selectedDevice);
+        setDashboardData(next);
+        if (!next?.isRunning) setStopRequested(false);
+        setErrorText("");
+      } catch (error) {
+        setErrorText(error instanceof Error ? error.message : "读取运行看板失败");
+      } finally {
+        if (!silent) setLoadingDashboard(false);
+      }
+    },
+    [selectedDevice],
+  );
+
+  useEffect(() => {
+    if (activeSection !== "playback-dashboard") return undefined;
+    if (!selectedDevice) {
+      setDashboardData(null);
+      return undefined;
+    }
+
+    let timerId = 0;
+    loadDashboard({ silent: false });
+    timerId = window.setInterval(() => {
+      loadDashboard({ silent: true });
+    }, 1500);
+
+    return () => {
+      if (timerId) window.clearInterval(timerId);
+    };
+  }, [activeSection, loadDashboard, selectedDevice]);
+
+  const filteredApps = useMemo(() => {
+    const keyword = appKeyword.trim().toLowerCase();
+    if (!keyword) return apps;
+    return apps.filter((app) => {
+      const name = String(app.appName || "").toLowerCase();
+      const pkg = String(app.packageName || "").toLowerCase();
+      return name.includes(keyword) || pkg.includes(keyword);
+    });
+  }, [appKeyword, apps]);
+
+  const appNameMap = useMemo(() => {
+    const map = new Map();
+    apps.forEach((item) => map.set(item.packageName, item.appName));
+    return map;
+  }, [apps]);
+
+  const appSelectorText = useMemo(() => {
+    if (selectedApps.length === 0) return "请选择软件（可多选）";
+    const names = selectedApps.map((pkg) => appNameMap.get(pkg) || pkg);
+    if (names.length <= 2) return names.join("、");
+    return `${names.slice(0, 2).join("、")} 等 ${names.length} 个软件`;
+  }, [appNameMap, selectedApps]);
+
+  const appCountText = useMemo(() => {
+    if (!selectedDevice) return "未选择设备";
+    if (loadingApps) return "正在读取设备应用列表...";
+    const base = appKeyword.trim()
+      ? `共 ${apps.length} 个应用，匹配 ${filteredApps.length} 个`
+      : `共 ${apps.length} 个应用`;
+    return `${base}，已选择 ${selectedApps.length} 个`;
+  }, [selectedDevice, loadingApps, appKeyword, apps.length, filteredApps.length, selectedApps.length]);
+
+  const summaryItems = useMemo(
+    () => [
+      { label: "循环次数", value: dashboardData?.totalCycles ?? 0 },
+      { label: "总滑动次数", value: dashboardData?.totalSwipes ?? 0 },
+      { label: "总点赞次数", value: dashboardData?.totalLikes ?? 0 },
+      { label: "弹窗处理次数", value: dashboardData?.totalPopupDismissed ?? 0 },
+      { label: "应用启动成功", value: dashboardData?.totalLaunchSuccesses ?? 0 },
+      { label: "应用启动失败", value: dashboardData?.totalLaunchFailures ?? 0 },
+    ],
+    [dashboardData],
+  );
+
+  const disabledAppSelector = loadingApps || apps.length === 0;
+  const disabledStartProgramButton =
+    startingProgram || loadingApps || !selectedDevice || selectedApps.length === 0;
+  const disabledUnlockButton = unlockingDevice || startingProgram || !selectedDevice;
+
+  const toggleAppSelection = (packageName) => {
+    setSelectedApps((current) =>
+      current.includes(packageName)
+        ? current.filter((item) => item !== packageName)
+        : [...current, packageName],
+    );
+  };
+
+  const selectAllFilteredApps = () => {
+    setSelectedApps((current) => {
+      const merged = new Set(current);
+      filteredApps.forEach((app) => merged.add(app.packageName));
+      return Array.from(merged);
+    });
+  };
+
+  const randomIntInRange = (min, max) =>
+    Math.floor(Math.random() * (max - min + 1)) + min;
+  const randomFloatInRange = (min, max, step = 0.1) => {
+    const totalSteps = Math.max(0, Math.round((max - min) / step));
+    const stepIndex = randomIntInRange(0, totalSteps);
+    return Number((min + stepIndex * step).toFixed(1));
+  };
+  const clampNumber = (value, min, max) => Math.min(max, Math.max(min, value));
+
+  const randomProfiles = [
+    { name: "快刷", weight: 0.35, avgStayMin: 8.5, avgStayMax: 11.5, staySpanMin: 3, staySpanMax: 6, likeMin: 8, likeMax: 18, perAppSecondsMin: 100, perAppSecondsMax: 200 },
+    { name: "常规", weight: 0.45, avgStayMin: 10, avgStayMax: 13.5, staySpanMin: 4, staySpanMax: 7, likeMin: 12, likeMax: 26, perAppSecondsMin: 150, perAppSecondsMax: 300 },
+    { name: "深看", weight: 0.2, avgStayMin: 13, avgStayMax: 18, staySpanMin: 5, staySpanMax: 10, likeMin: 18, likeMax: 36, perAppSecondsMin: 240, perAppSecondsMax: 420 },
+  ];
+
+  const handleRandomBrowseConfig = () => {
+    const totalWeight = randomProfiles.reduce((sum, profile) => sum + profile.weight, 0);
+    let cursor = Math.random() * totalWeight;
+    let profile = randomProfiles[randomProfiles.length - 1];
+    for (const item of randomProfiles) {
+      cursor -= item.weight;
+      if (cursor <= 0) {
+        profile = item;
+        break;
+      }
+    }
+
+    const avgStay = randomFloatInRange(profile.avgStayMin, profile.avgStayMax, 0.1);
+    const staySpan = randomFloatInRange(profile.staySpanMin, profile.staySpanMax, 0.1);
+    const nextWaitMin = Number(clampNumber(avgStay - staySpan / 2, 0.8, 45).toFixed(1));
+    const nextWaitMax = Number(clampNumber(avgStay + staySpan / 2, nextWaitMin + 1.2, 60).toFixed(1));
+    const nextLikeChance = randomIntInRange(profile.likeMin, profile.likeMax);
+    const targetPerAppSeconds = randomIntInRange(profile.perAppSecondsMin, profile.perAppSecondsMax);
+    const stayMid = (nextWaitMin + nextWaitMax) / 2;
+    const roundsCenter = Math.max(1, targetPerAppSeconds / stayMid);
+    let nextRoundsMin = clampNumber(Math.floor(roundsCenter * 0.7), 3, 28);
+    let nextRoundsMax = clampNumber(Math.ceil(roundsCenter * 1.3), nextRoundsMin + 2, 30);
+    if (nextRoundsMax - nextRoundsMin < 2) {
+      nextRoundsMin = clampNumber(nextRoundsMin - 1, 3, 28);
+      nextRoundsMax = clampNumber(nextRoundsMin + 2, nextRoundsMin + 2, 30);
+    }
+
+    setBrowseRoundsMin(nextRoundsMin);
+    setBrowseRoundsMax(nextRoundsMax);
+    setBrowseWaitMinSeconds(nextWaitMin);
+    setBrowseWaitMaxSeconds(nextWaitMax);
+    setBrowseLikeChancePercent(nextLikeChance);
+    setBrowseConfigText(
+      `随机配置（${profile.name}）已应用：滑动 ${nextRoundsMin}-${nextRoundsMax} 次，停留 ${nextWaitMin}-${nextWaitMax} 秒，点赞 ${nextLikeChance}%`,
+    );
+  };
+
+  const handleUnlockDevice = async () => {
+    if (!selectedDevice) return;
+    setUnlockingDevice(true);
+    setErrorText("");
+    setUnlockText("");
+    try {
+      const result = await playbackUnlockDevice(
+        selectedDevice,
+        unlockPattern,
+        clearCredentialAfterVerify,
+      );
+      setUnlockText(result?.message || "远程解锁已执行");
+    } catch (error) {
+      setErrorText(error instanceof Error ? error.message : "远程解锁失败");
+    } finally {
+      setUnlockingDevice(false);
+    }
+  };
+
+  const handleStartProgram = async () => {
+    if (!selectedDevice || selectedApps.length === 0) return;
+    setStartingProgram(true);
+    setErrorText("");
+    setActionText("");
+    try {
+      const result = await playbackStartProgram(selectedDevice, selectedApps, {
+        roundsMin: browseRoundsMin,
+        roundsMax: browseRoundsMax,
+        waitMinSeconds: browseWaitMinSeconds,
+        waitMaxSeconds: browseWaitMaxSeconds,
+        likeChancePercent: browseLikeChancePercent,
+      });
+      setActionText(result?.message || "启动程序已执行，正在进入运行看板...");
+      onNavigate("playback-dashboard");
+    } catch (error) {
+      setErrorText(error instanceof Error ? error.message : "启动程序失败");
+    } finally {
+      setStartingProgram(false);
+    }
+  };
+
+  const handleStopProgram = async () => {
+    if (!selectedDevice) return;
+    setStoppingProgram(true);
+    setErrorText("");
+    setActionText("");
+    try {
+      const result = await playbackStopProgram(selectedDevice);
+      setDashboardData(result?.dashboard || null);
+      setActionText(result?.message || "停止请求已发送");
+      setStopRequested(Boolean(result?.stopped && result?.dashboard?.isRunning));
+    } catch (error) {
+      setErrorText(error instanceof Error ? error.message : "停止程序失败");
+    } finally {
+      setStoppingProgram(false);
+    }
+  };
+
+  const handleClearLogs = async () => {
+    if (!selectedDevice) return;
+    setClearingLogs(true);
+    setErrorText("");
+    setActionText("");
+    try {
+      const next = await clearPlaybackProgramDashboardLogs(selectedDevice);
+      setDashboardData(next);
+      setActionText("运行日志已清空");
+    } catch (error) {
+      setErrorText(error instanceof Error ? error.message : "清空运行日志失败");
+    } finally {
+      setClearingLogs(false);
+    }
+  };
+
+  const handleExportLogs = async () => {
+    if (!selectedDevice) return;
+    setExportingLogs(true);
+    setErrorText("");
+    setActionText("");
+    try {
+      const exported = await exportPlaybackProgramDashboard(selectedDevice);
+      const blob = new Blob([exported.content], { type: exported.contentType });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = exported.fileName;
+      link.click();
+      URL.revokeObjectURL(url);
+      setActionText(`已导出日志文件：${exported.fileName}`);
+    } catch (error) {
+      setErrorText(error instanceof Error ? error.message : "导出运行日志失败");
+    } finally {
+      setExportingLogs(false);
+    }
+  };
+
+  return (
+    <RegionSection
+      title="自动刷视频控制台"
+      description="设备管理与运行看板，完全独立于自动钉钉打卡。"
+      moduleName={PLAYBACK_CONSOLE_MODULE_NAME}
+    >
+      <div className="dashboard-layout">
+        {activeSection === "playback-devices" ? (
+          <section id="playback-devices" className="dashboard-block dashboard-block--wide fade-up scroll-mt-28" style={{ "--delay": "80ms" }}>
+            <Card className="region-card h-full">
+              <CardHeader className="flex flex-col gap-4 border-b sm:flex-row sm:items-center sm:justify-between">
+                <div className="space-y-2">
+                  <CardTitle>设备管理</CardTitle>
+                  <CardDescription>选择设备与应用后，独立启动自动刷视频程序。</CardDescription>
+                </div>
+                <Button variant="outline" size="sm" className="gap-2" onClick={loadPlaybackDevices} disabled={loadingDevices}>
+                  <RefreshCw className={cn("size-4", loadingDevices && "animate-spin")} />
+                  <span>刷新设备</span>
+                </Button>
+              </CardHeader>
+              <CardContent className="region-card-content space-y-4 pt-4">
+                <div className="grid gap-4 lg:grid-cols-2">
+                  <div className="space-y-2">
+                    <label className="text-sm text-muted-foreground">安卓设备</label>
+                    <select
+                      className="h-10 w-full rounded-md border bg-background px-4 py-2 text-sm"
+                      value={selectedDevice}
+                      onChange={(event) => setSelectedDevice(event.target.value)}
+                      disabled={loadingDevices || devices.length === 0}
+                    >
+                      {devices.length === 0 ? <option value="">暂无可用设备</option> : null}
+                      {devices.map((device) => (
+                        <option key={device.serial} value={device.serial}>
+                          {device.serial}（{device.state}）
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-sm text-muted-foreground">设备软件（支持搜索多选）</label>
+                    <div className="relative" ref={appSelectorRef}>
+                      <button
+                        type="button"
+                        className="flex h-10 w-full items-center rounded-md border bg-background px-4 py-2 text-left text-sm"
+                        disabled={disabledAppSelector}
+                        onClick={() => {
+                          if (!disabledAppSelector) setIsAppDropdownOpen((open) => !open);
+                        }}
+                      >
+                        <span className="min-w-0 flex-1 truncate">{appSelectorText}</span>
+                        <ChevronDown className={cn("ml-2 size-4 shrink-0 transition-transform", isAppDropdownOpen && "rotate-180")} />
+                      </button>
+                      {isAppDropdownOpen ? (
+                        <div className="absolute left-0 right-0 top-[calc(100%+8px)] z-40 rounded-md border bg-background p-3 shadow-sm">
+                          <Input
+                            value={appKeyword}
+                            onChange={(event) => setAppKeyword(event.target.value)}
+                            placeholder="搜索软件名称或包名"
+                          />
+                          <div className="mt-2 flex flex-wrap gap-2">
+                            <Button variant="outline" size="sm" onClick={selectAllFilteredApps} disabled={filteredApps.length === 0}>
+                              全选匹配
+                            </Button>
+                            <Button variant="outline" size="sm" onClick={() => setSelectedApps([])} disabled={selectedApps.length === 0}>
+                              清空已选
+                            </Button>
+                          </div>
+                          <div className="mt-2 max-h-64 space-y-2 overflow-y-auto rounded-md border bg-muted/15 p-2">
+                            {filteredApps.length === 0 ? (
+                              <p className="px-2 py-2 text-sm text-muted-foreground">无匹配结果</p>
+                            ) : (
+                              filteredApps.map((app) => {
+                                const checked = selectedApps.includes(app.packageName);
+                                return (
+                                  <label key={app.packageName} className="flex cursor-pointer items-center gap-2 rounded-md border border-transparent px-2 py-2 hover:border-border hover:bg-accent/40">
+                                    <input type="checkbox" checked={checked} onChange={() => toggleAppSelection(app.packageName)} />
+                                    <span className="min-w-0 flex-1">
+                                      <span className="block truncate text-sm font-medium">{app.appName}</span>
+                                      <span className="block truncate text-xs text-muted-foreground">{app.packageName}</span>
+                                    </span>
+                                  </label>
+                                );
+                              })
+                            )}
+                          </div>
+                        </div>
+                      ) : null}
+                    </div>
+                  </div>
+                </div>
+
+                <Card className="bg-muted/20">
+                  <CardHeader className="pb-4">
+                    <CardTitle>浏览视频配置</CardTitle>
+                    <CardDescription>支持一键随机，也支持手动微调。</CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    <div className="flex flex-wrap gap-2">
+                      <Button variant="outline" size="sm" onClick={handleRandomBrowseConfig} disabled={startingProgram}>
+                        随机配置
+                      </Button>
+                      {browseConfigText ? <p className="text-sm text-muted-foreground">{browseConfigText}</p> : null}
+                    </div>
+                    <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+                      <div className="space-y-2">
+                        <label className="text-xs text-muted-foreground">每应用滑动最小次数</label>
+                        <Input type="number" min={1} max={30} value={browseRoundsMin} onChange={(event) => setBrowseRoundsMin(Number(event.target.value) || 1)} />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-xs text-muted-foreground">每应用滑动最大次数</label>
+                        <Input type="number" min={1} max={30} value={browseRoundsMax} onChange={(event) => setBrowseRoundsMax(Number(event.target.value) || 1)} />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-xs text-muted-foreground">停留最小秒数</label>
+                        <Input type="number" step="0.1" min={0.5} max={60} value={browseWaitMinSeconds} onChange={(event) => setBrowseWaitMinSeconds(Number(event.target.value) || 0.5)} />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-xs text-muted-foreground">停留最大秒数</label>
+                        <Input type="number" step="0.1" min={0.5} max={60} value={browseWaitMaxSeconds} onChange={(event) => setBrowseWaitMaxSeconds(Number(event.target.value) || 0.5)} />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-xs text-muted-foreground">随机点赞概率（%）</label>
+                        <Input type="number" min={0} max={100} step={1} value={browseLikeChancePercent} onChange={(event) => setBrowseLikeChancePercent(Number(event.target.value) || 0)} />
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+
+                <Card className="bg-muted/20">
+                  <CardHeader className="pb-4">
+                    <CardTitle>动作执行</CardTitle>
+                    <CardDescription>启动自动刷视频程序与远程解锁入口。</CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    <div className="flex flex-wrap gap-2">
+                      <Button
+                        variant="secondary"
+                        className="gap-2"
+                        onClick={handleStartProgram}
+                        disabled={disabledStartProgramButton}
+                      >
+                        <Play className="size-4" />
+                        <span>{startingProgram ? "执行中..." : "启动程序"}</span>
+                      </Button>
+                      <Button
+                        variant="outline"
+                        className="gap-2"
+                        onClick={handleUnlockDevice}
+                        disabled={disabledUnlockButton}
+                      >
+                        <ShieldCheck className="size-4" />
+                        <span>{unlockingDevice ? "解锁中..." : "执行远程解锁"}</span>
+                      </Button>
+                    </div>
+                    <div className="grid gap-4 md:grid-cols-2">
+                      <div className="space-y-2">
+                        <label className="text-xs text-muted-foreground">图案序列</label>
+                        <Input value={unlockPattern} onChange={(event) => setUnlockPattern(event.target.value)} placeholder="例如 2589" />
+                      </div>
+                      <label className="mt-6 flex items-center gap-2 text-sm text-muted-foreground">
+                        <input
+                          type="checkbox"
+                          checked={clearCredentialAfterVerify}
+                          onChange={(event) => setClearCredentialAfterVerify(event.target.checked)}
+                        />
+                        验证成功后清除锁屏凭据（远程模式）
+                      </label>
+                    </div>
+                  </CardContent>
+                </Card>
+
+                <div className="space-y-2 text-sm text-muted-foreground">
+                  <p>{appCountText}</p>
+                  {unlockText ? <p>{unlockText}</p> : null}
+                  {actionText ? <p>{actionText}</p> : null}
+                  {errorText ? <p className="text-red-500">错误：{errorText}</p> : null}
+                </div>
+              </CardContent>
+            </Card>
+          </section>
+        ) : null}
+
+        {activeSection === "playback-dashboard" ? (
+          <section id="playback-dashboard" className="dashboard-block dashboard-block--wide fade-up scroll-mt-28" style={{ "--delay": "80ms" }}>
+            <Card className="region-card h-full">
+              <CardHeader className="flex flex-col gap-4 border-b sm:flex-row sm:items-center sm:justify-between">
+                <div className="space-y-2">
+                  <CardTitle>运行看板</CardTitle>
+                  <CardDescription>实时展示自动刷视频执行数据，约每 1.5 秒自动刷新。</CardDescription>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <Button variant="outline" size="sm" onClick={handleClearLogs} disabled={!selectedDevice || clearingLogs || exportingLogs}>
+                    {clearingLogs ? "清空中..." : "清空日志"}
+                  </Button>
+                  <Button variant="outline" size="sm" onClick={handleExportLogs} disabled={!selectedDevice || exportingLogs || clearingLogs || stoppingProgram}>
+                    {exportingLogs ? "导出中..." : "导出日志"}
+                  </Button>
+                  <Button variant="secondary" size="sm" onClick={handleStopProgram} disabled={!selectedDevice || stoppingProgram || stopRequested || !dashboardData?.isRunning}>
+                    {stoppingProgram || stopRequested ? "停止中..." : "停止程序"}
+                  </Button>
+                </div>
+              </CardHeader>
+              <CardContent className="region-card-content space-y-4 pt-4">
+                <div className="grid gap-4 md:grid-cols-2">
+                  <div className="space-y-2">
+                    <label className="text-sm text-muted-foreground">安卓设备</label>
+                    <select
+                      className="h-10 w-full rounded-md border bg-background px-4 py-2 text-sm"
+                      value={selectedDevice}
+                      onChange={(event) => setSelectedDevice(event.target.value)}
+                      disabled={loadingDevices || devices.length === 0}
+                    >
+                      {devices.length === 0 ? <option value="">暂无可用设备</option> : null}
+                      {devices.map((device) => (
+                        <option key={device.serial} value={device.serial}>
+                          {device.serial}（{device.state}）
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <Card className="bg-muted/20">
+                    <CardContent className="space-y-2 p-4 text-sm">
+                      <p>当前状态：<strong className={dashboardData?.isRunning ? "text-emerald-600" : "text-amber-600"}>{dashboardData?.isRunning ? "运行中" : "未运行"}</strong></p>
+                      <p>开始时间：{formatPlaybackDateTime(dashboardData?.startedAt)}</p>
+                      <p>最近更新：{formatPlaybackDateTime(dashboardData?.lastUpdatedAt)}</p>
+                      <p>当前应用：{dashboardData?.currentAppName || dashboardData?.currentAppPackageName || "-"}</p>
+                    </CardContent>
+                  </Card>
+                </div>
+
+                <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-6">
+                  {summaryItems.map((item) => (
+                    <div key={item.label} className="rounded-lg border bg-muted/20 p-3">
+                      <p className="text-xs text-muted-foreground">{item.label}</p>
+                      <p className="mt-1 text-xl font-semibold">{item.value}</p>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="space-y-3">
+                  <h3 className="text-sm font-semibold">应用播放统计</h3>
+                  <div className="overflow-x-auto rounded-lg border">
+                    <table className="min-w-full border-collapse text-sm">
+                      <thead>
+                        <tr className="bg-muted/30 text-left">
+                          <th className="border-b px-3 py-2">应用</th>
+                          <th className="border-b px-3 py-2">播放时长</th>
+                          <th className="border-b px-3 py-2">循环命中</th>
+                          <th className="border-b px-3 py-2">滑动</th>
+                          <th className="border-b px-3 py-2">点赞</th>
+                          <th className="border-b px-3 py-2">弹窗处理</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {dashboardData?.apps?.length ? (
+                          dashboardData.apps.map((app) => (
+                            <tr key={app.packageName}>
+                              <td className="border-b px-3 py-2">
+                                <div className="font-medium">{app.appName}</div>
+                                <div className="text-xs text-muted-foreground">{app.packageName}</div>
+                              </td>
+                              <td className="border-b px-3 py-2">{formatPlaybackDuration(app.playDurationMs)}</td>
+                              <td className="border-b px-3 py-2">{app.cycles}</td>
+                              <td className="border-b px-3 py-2">{app.swipes}</td>
+                              <td className="border-b px-3 py-2">{app.likes}</td>
+                              <td className="border-b px-3 py-2">{app.popupDismissed}</td>
+                            </tr>
+                          ))
+                        ) : (
+                          <tr>
+                            <td colSpan={6} className="px-3 py-4 text-center text-muted-foreground">
+                              暂无应用统计数据
+                            </td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                <div className="space-y-3">
+                  <h3 className="text-sm font-semibold">执行日志</h3>
+                  <div className="max-h-[460px] space-y-2 overflow-y-auto rounded-lg border bg-muted/10 p-2">
+                    {dashboardData?.recentLogs?.length ? (
+                      dashboardData.recentLogs.map((log) => (
+                        <div key={log.id} className={cn("grid gap-1 rounded-md border bg-background px-3 py-2 text-xs md:grid-cols-[180px_70px_180px_minmax(0,1fr)]", log.level === "error" ? "border-red-200 bg-red-50/60 dark:border-red-900/40 dark:bg-red-950/20" : log.level === "warn" ? "border-amber-200 bg-amber-50/60 dark:border-amber-900/40 dark:bg-amber-950/20" : "border-border")}>
+                          <span className="text-muted-foreground">{formatPlaybackDateTime(log.timestamp)}</span>
+                          <span className="text-muted-foreground">轮次 {log.cycle}</span>
+                          <span className="font-medium">{log.action}</span>
+                          <span className="break-all text-muted-foreground">{log.detail}</span>
+                        </div>
+                      ))
+                    ) : (
+                      <p className="px-2 py-3 text-sm text-muted-foreground">暂无日志</p>
+                    )}
+                  </div>
+                </div>
+
+                <div className="space-y-2 text-sm text-muted-foreground">
+                  <p>{loadingDashboard ? "正在加载看板数据..." : "看板已连接自动刷新"}</p>
+                  {actionText ? <p>{actionText}</p> : null}
+                  {errorText ? <p className="text-red-500">错误：{errorText}</p> : null}
+                </div>
+              </CardContent>
+            </Card>
+          </section>
+        ) : null}
+      </div>
+    </RegionSection>
   );
 }
 
@@ -3648,7 +5248,7 @@ function SidebarSummaryCard({ collapsed, scheduleSummary }) {
   );
 }
 
-function RegionSection({ title, description, children }) {
+function RegionSection({ title, description, children, moduleName }) {
   const tone =
     title === "监控总览与执行态势"
       ? "overview"
@@ -3661,9 +5261,14 @@ function RegionSection({ title, description, children }) {
           : title === "告警日志与通知中心"
             ? "notify"
             : "brand";
-
   return (
-    <section className="space-y-6" data-region-title={title} data-region-tone={tone} aria-label={description}>
+    <section
+      className="region-section"
+      data-region-title={title}
+      data-region-tone={tone}
+      data-module={moduleName}
+      aria-label={description}
+    >
       {children}
     </section>
   );
@@ -3842,7 +5447,7 @@ function TopbarRegion({ title, tone, theme, sidebarCollapsed, onToggleTheme }) {
           </div>
           <button
             type="button"
-            className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+            className="inline-flex items-center gap-2 rounded-md px-2 py-1 text-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
             onClick={onToggleTheme}
           >
             {theme === "light" ? <MoonStar className="size-4" aria-hidden="true" /> : <SunMedium className="size-4" aria-hidden="true" />}
@@ -4019,7 +5624,7 @@ function MetricCard({ item, delay }) {
           <p className="text-xs font-medium uppercase tracking-[0.14em] text-muted-foreground">{item.label}</p>
           <div className="flex items-center gap-2">
             <h3 className="text-lg font-semibold tracking-tight">{item.value}</h3>
-            <Badge variant={tone} className="rounded-md px-2 py-0 text-xs">
+            <Badge variant={tone} className="rounded-md px-2 py-1 text-xs">
               {toneLabel(tone)}
             </Badge>
           </div>
@@ -4047,7 +5652,7 @@ function DecisionRow({ item }) {
 
 function Field({ label, dirty, error, helper, ...props }) {
   return (
-    <label className="space-y-2.5">
+    <label className="space-y-2">
       <div className="flex items-center justify-between gap-2">
         <span className="text-sm font-medium">{label}</span>
         {dirty ? (
@@ -4087,7 +5692,7 @@ function SerialField({
   const hasCurrentValue = Boolean(value) && !devices.some((device) => device.serial === value);
 
   return (
-    <label className="space-y-2.5">
+    <label className="space-y-2">
       <div className="flex items-center justify-between gap-2">
         <span className="text-sm font-medium">{label}</span>
         {dirty ? (
@@ -4100,7 +5705,7 @@ function SerialField({
         <div className="space-y-2">
           <select
             className={cn(
-              "h-10 w-full rounded-lg border border-border bg-background/80 px-3 text-sm",
+              "h-10 w-full rounded-lg border border-border bg-background/80 px-4 py-2 text-sm",
               dirty && "border-zinc-400 dark:border-zinc-500",
               error && "border-red-400 focus-visible:ring-red-300 dark:border-red-500 dark:focus-visible:ring-red-900",
             )}
@@ -4163,7 +5768,7 @@ function RemoteAdbTargetField({
       : { name: "", target: String(target || "") },
   ).filter((target) => target.target);
   return (
-    <label className="space-y-2.5">
+    <label className="space-y-2">
       <div className="flex items-center justify-between gap-2">
         <span className="text-sm font-medium">{label}</span>
         {dirty ? (
@@ -4214,7 +5819,7 @@ function TimePickerField({
   onChange,
 }) {
   return (
-    <label className="flex flex-col gap-2.5">
+    <label className="flex flex-col gap-2">
       <div className="flex items-center justify-between gap-2">
         <span className="text-sm font-medium">{label}</span>
         {dirty ? (
@@ -4279,7 +5884,7 @@ function LogRow({ log }) {
         <Badge variant="outline" className={cn("h-fit w-fit rounded-md", toneSet.soft)}>
           {log.timeLabel ?? log.time}
         </Badge>
-        <div className="space-y-1.5">
+        <div className="space-y-2">
           <p className="text-sm font-medium">{log.title}</p>
           <p className="text-sm leading-6 text-muted-foreground">{log.detail}</p>
         </div>
@@ -4298,7 +5903,7 @@ function TimelineRow({ item, index, isLast }) {
         {index + 1}
       </div>
       {!isLast ? <div className="absolute left-[9px] top-6 h-[calc(100%-12px)] w-px bg-border" /> : null}
-      <div className="pb-5">
+      <div className="pb-4">
         <p className={cn("text-sm leading-6 text-muted-foreground", index === 1 && "font-medium text-foreground")}>
           {item}
         </p>
@@ -4316,7 +5921,7 @@ function GuardRow({ label, value, emphasized = false }) {
         <div className={cn("flex size-8 shrink-0 items-center justify-center rounded-md border", toneSet.icon)}>
           <ShieldCheck className="size-4" />
         </div>
-        <div className="space-y-1.5">
+        <div className="space-y-2">
           <p className={cn("text-sm", emphasized ? "font-medium text-foreground" : "font-medium")}>{label}</p>
           <p className="text-sm leading-6 text-muted-foreground">{value}</p>
         </div>

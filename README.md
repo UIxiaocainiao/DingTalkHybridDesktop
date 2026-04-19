@@ -57,12 +57,16 @@ cd DingTalkHybridDesktop
 ### 2. 启动 Web 控制台（推荐）
 
 ```bash
-npm install --prefix frontend
-python3 backend/api_server.py
-npm run dev --prefix frontend
+npm install
+npm run dev
 ```
 
 访问：`http://127.0.0.1:5173`
+
+说明：
+
+- `npm run dev` 会同时启动前端（Vite）和后端（Python API）。
+- 如需单独启动：`npm run dev:frontend` / `npm run dev:backend`。
 
 ## Scheduler CLI 常用命令
 
@@ -154,6 +158,35 @@ python3 backend/dingtalk_random_scheduler.py set-next --window evening --time 18
 ### Frontend
 
 - `VITE_API_BASE_URL`
+- `VITE_PLAYBACK_API_BASE_URL`（默认 `http://127.0.0.1:4000`）
+
+## PlaybackE2E 平级项目联动
+
+左侧导航现已支持平级项目切换：
+
+- 自动钉钉打卡
+- 自动刷视频（PlaybackE2E）
+
+如需在本仓库内统一启动/检查 PlaybackE2E 相关服务，可使用：
+
+```bash
+# 安装 PlaybackE2E 前后端依赖
+npm run playback:bootstrap
+
+# 启动 PlaybackE2E 后台服务（frontend + backend）
+npm run playback:start
+
+# 查看运行状态
+npm run playback:status
+
+# 停止服务
+npm run playback:stop
+```
+
+说明：
+
+- 默认查找目录：`../PlaybackE2E`
+- 可通过环境变量覆盖：`PLAYBACK_DIR=/absolute/path/to/PlaybackE2E`
 
 ## 测试
 

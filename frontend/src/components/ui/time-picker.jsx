@@ -46,7 +46,7 @@ function TimeSelect({ label, value, onChange, options }) {
       <select
         value={String(value)}
         onChange={(event) => onChange(Number(event.target.value))}
-        className="flex h-10 w-full rounded-lg border border-input bg-background px-3 text-sm outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring/60"
+        className="flex h-10 w-full rounded-lg border border-input bg-background px-4 py-2 text-sm outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring/60"
       >
         {options.map((option) => (
           <option key={option} value={option}>
@@ -119,7 +119,7 @@ function TimePicker({
         variant="outline"
         disabled={disabled}
         className={cn(
-          "h-10 w-full justify-between rounded-lg bg-muted/30 px-3 font-medium tabular-nums",
+          "h-10 w-full justify-between rounded-lg bg-muted/30 px-4 py-2 font-medium tabular-nums",
           invalid && "border-red-400 focus-visible:ring-red-300 dark:border-red-500 dark:focus-visible:ring-red-900",
         )}
         onClick={() => setOpen((current) => !current)}
