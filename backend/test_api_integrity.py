@@ -274,6 +274,11 @@ def main() -> int:
             assert "message" in payload
             print(f"adb-disconnect: ok ({status})")
 
+            status, payload = api_request("POST", "/api/actions/adb-diagnose", {}, timeout=20)
+            assert status == 200 and payload.get("ok") is True
+            assert isinstance(payload.get("diagnostics"), dict)
+            print("adb-diagnose: ok")
+
             status, payload = api_request(
                 "POST",
                 "/api/actions/remote-adb-targets/delete",

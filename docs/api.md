@@ -5,6 +5,7 @@
 - 配置保存: `POST /api/config`
   - `config.recent_remote_adb_targets` 会保留最近使用过的远程目标列表，结构为 `[{ "name": "...", "target": "host:port" }]`
   - `config.remote_adb_target_name` 可为当前远程目标设置显示名称
+  - `config.enable_auto_remote_adb_connect` 控制是否在 `GET /api/dashboard` 阶段自动尝试远程 ADB 连接（默认开启）
 - 打卡记录: `GET /api/checkin-records`, `POST /api/checkin-records`, `POST /api/checkin-records/delete`
 - 动作接口:
   - `POST /api/actions/reroll`
@@ -12,6 +13,7 @@
   - `POST /api/actions/adb-install`
   - `POST /api/actions/adb-connect`
   - `POST /api/actions/adb-disconnect`
+  - `POST /api/actions/adb-diagnose`
   - `POST /api/actions/remote-adb-targets/delete`
   - `POST /api/actions/adb-restart`
   - `POST /api/actions/run-once`
@@ -37,6 +39,12 @@
 - 前置条件：配置中已保存 `remote_adb_target`。
 - 成功：返回 `message` 和 `detail`，并附带最新 `dashboard`。
 - 失败：常见原因是目标为空，或 ADB 本身不可用。
+
+## POST /api/actions/adb-diagnose
+
+- 用途：对当前 `remote_adb_target` 执行链路诊断（目标格式、DNS 解析、TCP 可达性、adb 设备列表状态）。
+- 成功：返回 `message`、`detail`，并附带 `diagnostics` 结构化结果和最新 `dashboard`。
+- 失败：常见原因是未配置 `remote_adb_target` 或目标格式不合法。
 
 ## POST /api/actions/remote-adb-targets/delete
 
@@ -93,6 +101,8 @@
 - `remoteAdb.detail`: 最近一次远程 ADB 动作结果说明
 - `remoteAdb.checkedAt`: 最近一次远程 ADB 动作时间
 - `remoteAdb.checkedAtLabel`: 最近一次远程 ADB 动作时间的北京时间展示值
+- `device.autoRemoteAdbConnectEnabled`: 是否开启“无在线设备时自动尝试远程 ADB 连接”
+- `device.autoRemoteAdbConnectNote`: 本次自动连接的结果说明（成功、失败或冷却提示）
 - `config.remote_adb_target_name`: 当前远程目标的显示名称，例如 `办公室测试机`
 - `config.recent_remote_adb_targets`: 最近使用过的远程目标对象列表，按最近使用排序
   - 结构为 `[{ "name": "办公室测试机", "target": "192.168.1.8:5555" }]`

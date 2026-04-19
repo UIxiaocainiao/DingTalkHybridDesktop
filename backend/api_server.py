@@ -8,6 +8,7 @@ import json
 import os
 import re
 import signal
+import socket
 import subprocess
 import sys
 import threading
@@ -69,6 +70,32 @@ CHECKIN_TYPE_LABELS = {
     "evening": "下午打卡",
 }
 DEFAULT_STATE_FILE = os.environ.get("DINGTALK_CONSOLE_DEFAULT_STATE_FILE", scheduler.DEFAULT_STATE_FILE)
+
+
+def read_env_bool(name: str, default: bool) -> bool:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    return str(raw).strip().lower() not in {"0", "false", "off", "no"}
+
+
+def read_env_int(name: str, default: int, minimum: int = 0) -> int:
+    raw = os.environ.get(name)
+    if raw is None:
+        return max(minimum, default)
+    try:
+        value = int(str(raw).strip())
+    except Exception:
+        return max(minimum, default)
+    return max(minimum, value)
+
+
+AUTO_REMOTE_ADB_CONNECT_DEFAULT = read_env_bool("DINGTALK_AUTO_REMOTE_ADB_CONNECT", True)
+AUTO_REMOTE_ADB_CONNECT_COOLDOWN_SECONDS = read_env_int(
+    "DINGTALK_AUTO_REMOTE_ADB_CONNECT_COOLDOWN_SECONDS",
+    30,
+    minimum=5,
+)
 API_LOCK = threading.Lock()
 
 
@@ -147,6 +174,7 @@ def default_console_config() -> dict[str, Any]:
         "enable_scrcpy_watch": False,
         "notify_on_success": False,
         "enable_workday_check": True,
+        "enable_auto_remote_adb_connect": AUTO_REMOTE_ADB_CONNECT_DEFAULT,
         "adb_bin": "",
         "scrcpy_bin": "",
         "state_file": DEFAULT_STATE_FILE,
@@ -213,7 +241,12 @@ def normalize_console_config(payload: Any) -> dict[str, Any]:
         if key in payload and payload[key] is not None:
             normalized[key] = max(minimum, int(payload[key]))
 
-    for key in ("enable_scrcpy_watch", "notify_on_success", "enable_workday_check"):
+    for key in (
+        "enable_scrcpy_watch",
+        "notify_on_success",
+        "enable_workday_check",
+        "enable_auto_remote_adb_connect",
+    ):
         if key in payload:
             normalized[key] = bool(payload[key])
 
@@ -406,6 +439,35 @@ def serialize_remote_adb_status() -> dict[str, Any]:
     }
 
 
+def parse_iso_datetime(value: Any) -> datetime | None:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    try:
+        return datetime.fromisoformat(raw)
+    except Exception:
+        return None
+
+
+def should_throttle_auto_remote_adb_connect(target: str) -> tuple[bool, str]:
+    status = read_remote_adb_status()
+    if str(status.get("target") or "").strip() != target:
+        return False, ""
+    if str(status.get("action") or "").strip() != "connect":
+        return False, ""
+
+    checked_at = parse_iso_datetime(status.get("checkedAt"))
+    if not checked_at:
+        return False, ""
+
+    elapsed = (scheduler.now_beijing() - checked_at).total_seconds()
+    if elapsed >= AUTO_REMOTE_ADB_CONNECT_COOLDOWN_SECONDS:
+        return False, ""
+
+    remaining_seconds = int(max(1, AUTO_REMOTE_ADB_CONNECT_COOLDOWN_SECONDS - elapsed))
+    return True, f"远程 ADB 最近刚尝试连接，{remaining_seconds} 秒后将自动重试。"
+
+
 def save_process_record(payload: dict[str, Any]) -> None:
     PROCESS_FILE.parent.mkdir(parents=True, exist_ok=True)
     PROCESS_FILE.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
@@ -582,7 +644,7 @@ def resolve_workday_snapshot(
     return result, None
 
 
-def resolve_device_snapshot(config: dict[str, Any]) -> dict[str, Any]:
+def resolve_device_snapshot(config: dict[str, Any], allow_auto_remote_connect: bool = True) -> dict[str, Any]:
     args = build_namespace(config, command="status")
     adb_bin, scrcpy_bin, warnings = scheduler.resolve_binaries_for_inspection(args)
     if adb_bin:
@@ -594,6 +656,12 @@ def resolve_device_snapshot(config: dict[str, Any]) -> dict[str, Any]:
     status: scheduler.DeviceStatus | None = None
     error = ""
     statuses: list[scheduler.DeviceStatus] = []
+    auto_connect_note = ""
+    remote_target = str(config.get("remote_adb_target") or "").strip()
+    remote_target_name = str(config.get("remote_adb_target_name") or "").strip()
+    auto_remote_adb_enabled = bool(
+        config.get("enable_auto_remote_adb_connect", AUTO_REMOTE_ADB_CONNECT_DEFAULT)
+    )
 
     if adb_bin:
         try:
@@ -607,6 +675,38 @@ def resolve_device_snapshot(config: dict[str, Any]) -> dict[str, Any]:
             "设备连接器缺少 adb：请在网页端点击“在线安装 ADB”，安装会在当前云服务器执行；"
             "也可以在前台配置 adb_bin 为 platform-tools/adb 的绝对路径。"
         )
+
+    if (
+        adb_bin
+        and not error
+        and allow_auto_remote_connect
+        and auto_remote_adb_enabled
+        and remote_target
+        and not any(item.state == "device" for item in statuses)
+    ):
+        throttled, throttle_note = should_throttle_auto_remote_adb_connect(remote_target)
+        if throttled:
+            auto_connect_note = throttle_note
+        else:
+            try:
+                output = connect_remote_adb_for_dashboard(adb_bin, remote_target)
+                detail = output
+                remember_remote_adb_target(remote_target, remote_target_name)
+                record_remote_adb_status(remote_target, "connect", True, detail)
+                auto_connect_note = (
+                    f"{remote_target_name + ' / ' if remote_target_name else ''}{remote_target} 已自动连通。"
+                )
+                try:
+                    statuses = scheduler.list_device_statuses()
+                except subprocess.CalledProcessError as exc:
+                    error = summarize_adb_connection_error(scheduler.describe_process_error(exc))
+                except Exception as exc:
+                    error = summarize_adb_connection_error(str(exc))
+            except Exception as exc:
+                detail = summarize_remote_adb_error(str(exc), remote_target)
+                remember_remote_adb_target(remote_target, remote_target_name)
+                record_remote_adb_status(remote_target, "connect", False, detail)
+                auto_connect_note = f"自动连接失败：{detail}"
 
     if adb_bin and not error:
         if selected_serial:
@@ -624,7 +724,16 @@ def resolve_device_snapshot(config: dict[str, Any]) -> dict[str, Any]:
                 status = statuses[0]
                 selected_serial = statuses[0].serial
             elif not statuses:
-                error = "未发现在线设备：请确认 USB 已连接、已开启 USB 调试，并重新刷新设备状态。"
+                if remote_target and auto_connect_note:
+                    error = f"未发现在线设备：{auto_connect_note}"
+                elif remote_target:
+                    named_target = f"{remote_target_name} / {remote_target}" if remote_target_name else remote_target
+                    error = (
+                        f"未发现在线设备：已配置远程目标 {named_target}，"
+                        "可点击“连接远程 ADB”或稍后等待自动重试。"
+                    )
+                else:
+                    error = "未发现在线设备：请确认 USB 已连接、已开启 USB 调试，并重新刷新设备状态。"
 
     scrcpy_running = False
     if scrcpy_bin and selected_serial:
@@ -642,6 +751,8 @@ def resolve_device_snapshot(config: dict[str, Any]) -> dict[str, Any]:
             processed_warnings.append(summarize_scrcpy_connection_error(warning))
         else:
             processed_warnings.append(warning)
+    if auto_connect_note and auto_connect_note not in processed_warnings and auto_connect_note not in error:
+        processed_warnings.append(auto_connect_note)
 
     device_count = len(statuses)
     online_count = len([item for item in statuses if item.state == "device"])
@@ -649,9 +760,8 @@ def resolve_device_snapshot(config: dict[str, Any]) -> dict[str, Any]:
     offline_count = len([item for item in statuses if item.state == "offline"])
     device_list = [
         {"serial": item.serial, "state": item.state, "usbConnected": item.usb_connected}
-        for item in statuses[:5]
+        for item in statuses
     ]
-    remote_target = config["remote_adb_target"] or ""
     remote_connected = bool(
         remote_target and any(item.serial == remote_target and item.state == "device" for item in statuses)
     )
@@ -659,8 +769,10 @@ def resolve_device_snapshot(config: dict[str, Any]) -> dict[str, Any]:
     return {
         "serial": selected_serial,
         "remoteAdbTarget": remote_target,
-        "remoteAdbTargetName": config.get("remote_adb_target_name", ""),
+        "remoteAdbTargetName": remote_target_name,
         "remoteAdbConnected": remote_connected,
+        "autoRemoteAdbConnectEnabled": auto_remote_adb_enabled,
+        "autoRemoteAdbConnectNote": auto_connect_note,
         "summary": scheduler.status_summary(status) if status else "unavailable",
         "ready": scheduler.is_device_ready(status),
         "authorized": bool(status and status.state == "device"),
@@ -977,13 +1089,13 @@ def build_alerts(
     ]
 
 
-def build_dashboard() -> dict[str, Any]:
+def build_dashboard(allow_auto_remote_connect: bool = True) -> dict[str, Any]:
     config = load_console_config()
     apply_console_windows(config)
     state = load_scheduler_state(config)
     process_state = get_scheduler_process_state()
     workday_result, workday_error = resolve_workday_snapshot(config, state)
-    device = resolve_device_snapshot(config)
+    device = resolve_device_snapshot(config, allow_auto_remote_connect=allow_auto_remote_connect)
     windows = build_window_items(config, state)
     logs = read_recent_logs()
     workday = serialize_workday_result(workday_result, workday_error)
@@ -1004,6 +1116,7 @@ def build_dashboard() -> dict[str, Any]:
             f"scrcpy 观察模式 {'已开启' if config['enable_scrcpy_watch'] else '已关闭'}",
             f"成功通知 {'已开启' if config['notify_on_success'] else '已关闭'}",
             f"工作日校验 {'已开启' if config['enable_workday_check'] else '已关闭'}",
+            f"远程 ADB 自动连接 {'已开启' if config['enable_auto_remote_adb_connect'] else '已关闭'}",
         ],
         "statusTags": build_status_tags(process_state, device, workday),
         "alerts": build_alerts(process_state, device, workday),
@@ -1196,6 +1309,16 @@ def restart_adb() -> dict[str, Any]:
     }
 
 
+def connect_remote_adb_for_dashboard(adb_bin: str, target: str) -> str:
+    return scheduler.adb_connect(
+        adb_bin,
+        target,
+        retries=1,
+        retry_interval_seconds=0.2,
+        probe_timeout_seconds=1.5,
+    )
+
+
 def connect_remote_adb_with_recovery(adb_bin: str, target: str) -> tuple[str, bool]:
     try:
         return scheduler.adb_connect(adb_bin, target), False
@@ -1300,6 +1423,127 @@ def disconnect_remote_adb() -> dict[str, Any]:
     return {
         "message": "远程 ADB 已断开",
         "detail": output,
+    }
+
+
+def diagnose_remote_adb() -> dict[str, Any]:
+    config = load_console_config()
+    args = build_namespace(config, command="status")
+    target = str(config.get("remote_adb_target") or "").strip()
+    target_name = str(config.get("remote_adb_target_name") or "").strip()
+
+    if not target:
+        raise ApiError(400, "请先在前台配置 remote_adb_target，例如 192.168.1.8:5555。")
+
+    try:
+        normalized_target, host, port = scheduler.normalize_remote_adb_target(target)
+    except Exception as exc:
+        raise ApiError(400, f"远程目标格式不合法：{exc}") from exc
+
+    report: dict[str, Any] = {
+        "target": normalized_target,
+        "targetName": target_name,
+        "host": host,
+        "port": port,
+        "dnsOk": False,
+        "dnsIps": [],
+        "dnsError": "",
+        "tcpOk": False,
+        "tcpError": "",
+        "adbAvailable": False,
+        "adbBin": "",
+        "adbSource": "",
+        "adbError": "",
+        "deviceCount": 0,
+        "onlineCount": 0,
+        "targetState": "",
+        "targetRawLine": "",
+        "suggestions": [],
+    }
+
+    lines: list[str] = [f"目标 {target_name + ' / ' if target_name else ''}{normalized_target}"]
+
+    try:
+        infos = socket.getaddrinfo(host, port, proto=socket.IPPROTO_TCP)
+        ips = sorted({item[4][0] for item in infos if item and item[4]})
+        report["dnsOk"] = True
+        report["dnsIps"] = ips
+        lines.append(f"DNS 可解析（{', '.join(ips[:4]) if ips else '无返回地址'}）")
+    except Exception as exc:
+        report["dnsError"] = str(exc)
+        lines.append(f"DNS 解析失败（{exc}）")
+
+    try:
+        scheduler.probe_remote_tcp_endpoint(host, port, timeout_seconds=2.5)
+        report["tcpOk"] = True
+        lines.append("TCP 端口可达")
+    except Exception as exc:
+        report["tcpError"] = str(exc)
+        lines.append(f"TCP 探测失败（{exc}）")
+
+    try:
+        adb_bin = scheduler.resolve_binary("adb", args.adb_bin, scheduler.ADB_CANDIDATES)
+        report["adbAvailable"] = True
+        report["adbBin"] = adb_bin
+        report["adbSource"] = scheduler.describe_binary_source(adb_bin, config.get("adb_bin") or None)
+        lines.append(f"ADB 可用（{report['adbSource']}）")
+    except Exception as exc:
+        report["adbError"] = str(exc)
+        lines.append(f"ADB 不可用（{exc}）")
+        report["suggestions"].append("先点击“在线安装 ADB”或在前台配置 adb_bin。")
+        return {
+            "message": "远程 ADB 诊断完成（存在阻断项）",
+            "detail": "；".join(lines),
+            "diagnostics": report,
+        }
+
+    try:
+        statuses = scheduler.list_device_statuses_with_bin(report["adbBin"])
+    except subprocess.CalledProcessError as exc:
+        adb_devices_error = scheduler.describe_process_error(exc)
+        report["adbError"] = adb_devices_error
+        lines.append(f"adb devices 执行失败（{adb_devices_error}）")
+        report["suggestions"].append("先执行“重启 ADB”，再重新诊断。")
+        return {
+            "message": "远程 ADB 诊断完成（存在阻断项）",
+            "detail": "；".join(lines),
+            "diagnostics": report,
+        }
+    except Exception as exc:
+        report["adbError"] = str(exc)
+        lines.append(f"adb devices 执行失败（{exc}）")
+        report["suggestions"].append("先执行“重启 ADB”，再重新诊断。")
+        return {
+            "message": "远程 ADB 诊断完成（存在阻断项）",
+            "detail": "；".join(lines),
+            "diagnostics": report,
+        }
+
+    report["deviceCount"] = len(statuses)
+    report["onlineCount"] = len([item for item in statuses if item.state == "device"])
+    target_status = next((item for item in statuses if item.serial == normalized_target), None)
+    if target_status:
+        report["targetState"] = target_status.state
+        report["targetRawLine"] = target_status.raw_line
+        lines.append(f"目标设备状态 {target_status.state}")
+    else:
+        lines.append("目标设备尚未出现在 adb 列表")
+
+    if report["tcpOk"] and report["targetState"] != "device":
+        report["suggestions"].append("网络可达但尚未连上，建议点击“连接远程 ADB”立即重试。")
+    if report["targetState"] == "unauthorized":
+        report["suggestions"].append("目标已连通但未授权，请在手机端确认无线调试授权弹窗。")
+    if not report["tcpOk"]:
+        report["suggestions"].append("先打通云服务器到目标 host:port 的网络路径（隧道/安全组/防火墙）。")
+    if not report["suggestions"]:
+        report["suggestions"].append("链路基本正常，可继续执行刷新状态或启动任务。")
+
+    lines.append(f"在线设备 {report['onlineCount']} / 总设备 {report['deviceCount']}")
+
+    return {
+        "message": "远程 ADB 诊断完成",
+        "detail": "；".join(lines),
+        "diagnostics": report,
     }
 
 
@@ -1462,6 +1706,8 @@ class ApiHandler(BaseHTTPRequestHandler):
                     result = connect_remote_adb()
                 elif path == "/api/actions/adb-disconnect":
                     result = disconnect_remote_adb()
+                elif path == "/api/actions/adb-diagnose":
+                    result = diagnose_remote_adb()
                 elif path == "/api/actions/remote-adb-targets/delete":
                     result = delete_remote_adb_target(str(payload.get("target") or ""))
                 elif path == "/api/actions/adb-restart":
@@ -1508,7 +1754,7 @@ class ApiHandler(BaseHTTPRequestHandler):
                 else:
                     raise ApiError(404, f"未找到接口: {path}")
 
-                dashboard = build_dashboard()
+                dashboard = build_dashboard(allow_auto_remote_connect=False)
                 self.send_json(200, {"ok": True, **result, "dashboard": dashboard})
         except ApiError as exc:
             self.send_json(exc.status_code, {"ok": False, "message": exc.message})

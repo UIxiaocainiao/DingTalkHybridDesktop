@@ -50,6 +50,13 @@ export function disconnectRemoteAdb() {
   });
 }
 
+export function diagnoseRemoteAdb() {
+  return request("/api/actions/adb-diagnose", {
+    method: "POST",
+    body: JSON.stringify({}),
+  });
+}
+
 export function deleteRemoteAdbTarget(target) {
   return request("/api/actions/remote-adb-targets/delete", {
     method: "POST",

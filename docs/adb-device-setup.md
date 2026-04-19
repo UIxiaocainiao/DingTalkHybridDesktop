@@ -85,6 +85,21 @@ adb tcpip 5555
 
 如果自检结果里设备状态为 `device`，说明连接成功。
 
+补充（公网部署默认行为）：
+
+1. 只要已保存 `remote_adb_target`，且当前没有在线设备，后端在 `GET /api/dashboard` 时会自动尝试远程 ADB 连接。
+2. 自动连接失败后会进入冷却窗口，默认约 30 秒后自动重试，避免每次刷新都重复打连接。
+3. 你也可以随时手动点击“连接远程 ADB”立即重试。
+
+可选环境变量：
+
+- `DINGTALK_AUTO_REMOTE_ADB_CONNECT=1|0`：是否开启仪表盘自动连接（默认 `1`）。
+- `DINGTALK_AUTO_REMOTE_ADB_CONNECT_COOLDOWN_SECONDS=<秒>`：自动重试冷却时间（默认 `30`，最小 `5`）。
+
+如果是长期公网部署，建议继续看：
+
+- `docs/public-remote-adb-tunnel.md`（Tailscale / FRP 方案、保活脚本、systemd 托管）
+
 ## 4) 启动服务
 
 ```bash

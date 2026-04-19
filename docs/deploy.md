@@ -35,3 +35,11 @@ DINGTALK_PLATFORM_TOOLS_DIR=<VOLUME_MOUNT_PATH>/platform-tools
 
 - 网页端“在线安装 ADB”会把 platform-tools 下载到运行时目录。
 - 若未使用持久卷，容器重建或重新部署后，已安装的 ADB 可能丢失。
+- 公网远程 ADB 建议保留默认自动连接：
+  - `DINGTALK_AUTO_REMOTE_ADB_CONNECT=1`
+  - `DINGTALK_AUTO_REMOTE_ADB_CONNECT_COOLDOWN_SECONDS=30`（按网络稳定性调整）
+- 建议额外启用保活脚本（无人值守）：
+  - `scripts/remote_adb_keepalive.sh`
+  - systemd 模板：`scripts/remote_adb_keepalive.service.example`
+  - systemd 一键安装：`scripts/install_remote_adb_keepalive_service.sh`
+  - 详细步骤：`docs/public-remote-adb-tunnel.md`

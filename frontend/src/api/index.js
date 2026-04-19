@@ -8,6 +8,7 @@ export {
   installAdb,
   connectRemoteAdb,
   disconnectRemoteAdb,
+  diagnoseRemoteAdb,
   deleteRemoteAdbTarget,
   restartAdb,
   runOnce,

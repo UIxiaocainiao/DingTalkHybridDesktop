@@ -1,0 +1,19 @@
+[Unit]
+Description=DingTalk Remote ADB Keepalive
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=www-data
+WorkingDirectory=/opt/dingtalk-automatic-check-in
+Environment=REMOTE_ADB_TARGET=192.168.1.8:5555
+Environment=ADB_BIN=/opt/dingtalk-automatic-check-in/backend/runtime/platform-tools/adb
+Environment=REMOTE_ADB_KEEPALIVE_INTERVAL_SECONDS=30
+Environment=REMOTE_ADB_KEEPALIVE_RESTART_ADB_ON_FAILURE=1
+ExecStart=/bin/bash /opt/dingtalk-automatic-check-in/scripts/remote_adb_keepalive.sh
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

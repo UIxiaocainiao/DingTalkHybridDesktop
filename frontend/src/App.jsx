@@ -49,6 +49,7 @@ import {
   fetchCheckinRecords,
   connectRemoteAdb,
   deleteRemoteAdbTarget,
+  diagnoseRemoteAdb,
   disconnectRemoteAdb,
   installAdb,
   rerollSchedule,
@@ -78,7 +79,6 @@ const PROJECT_NAV_ITEMS = [
   { id: "playback", label: "自动刷视频项目", icon: CirclePlay },
 ];
 
-const DINGTALK_PRIMARY_STANDALONE_NAV_ITEMS = [{ id: "overview", label: "运行总览", icon: Gauge }];
 const DINGTALK_FEATURE_GROUP_NAV = {
   id: "feature-center",
   label: "打卡功能",
@@ -90,9 +90,10 @@ const DINGTALK_FEATURE_GROUP_NAV = {
   ],
 };
 const GUIDE_NAV_ITEM = { id: "guide", label: "使用说明", icon: CircleHelp };
+const DINGTALK_PROJECT_MENU_ITEMS = [...DINGTALK_FEATURE_GROUP_NAV.items];
 const PLAYBACK_NAV_ITEMS = [
-  { id: "playback-devices", label: "设备管理", icon: Smartphone },
-  { id: "playback-dashboard", label: "运行看板", icon: ListChecks },
+  { id: "playback-devices", label: "任务配置", icon: FolderCog },
+  { id: "playback-dashboard", label: "运行记录", icon: ListChecks },
 ];
 const PLAYBACK_CONSOLE_MODULE_NAME = "playback-project-console";
 const ADVANCED_SEARCH_FEATURE_MODULE_ID = "advanced-search-feature";
@@ -100,6 +101,7 @@ const ADVANCED_SEARCH_FEATURE_MODULE_NAME = "高级搜索功能";
 
 const SECTION_GROUP_MAP = {
   overview: "overview",
+  "device-management": "device-management",
   actions: "actions",
   windows: "actions",
   config: "actions",
@@ -114,38 +116,27 @@ const SECTION_GROUP_MAP = {
 
 const SECTION_TOPBAR_META = {
   overview: { title: "监控总览与执行态势", tone: "overview" },
+  "device-management": { title: "设备管理", tone: "overview" },
   actions: { title: "任务配置与排期管理", tone: "config" },
   records: { title: "打卡记录", tone: "records" },
   logs: { title: "告警日志与通知中心", tone: "notify" },
   guide: { title: "使用说明", tone: "config" },
-  "playback-devices": { title: "自动刷视频 · 设备管理", tone: "overview" },
-  "playback-dashboard": { title: "自动刷视频 · 运行看板", tone: "notify" },
+  "playback-devices": { title: "自动刷视频 · 任务配置", tone: "overview" },
+  "playback-dashboard": { title: "自动刷视频 · 运行记录", tone: "notify" },
 };
 
 const SECTION_NAV_META = {
   overview: { label: "运行总览", hint: "查看当前设备、调度与风险状态" },
+  "device-management": { label: "设备管理", hint: "查看所有已连接安卓设备" },
   actions: { label: "任务配置", hint: "调整参数、排期窗口与执行动作" },
   records: { label: "打卡记录", hint: "按日期和状态追踪执行结果" },
   logs: { label: "告警日志", hint: "定位异常并快速做处置决策" },
   guide: { label: "使用说明", hint: "查看连接向导与操作文档" },
-  "playback-devices": { label: "设备管理", hint: "管理刷视频设备与应用目标" },
-  "playback-dashboard": { label: "运行看板", hint: "观察刷视频任务执行态势" },
+  "playback-devices": { label: "任务配置", hint: "配置刷视频设备与应用目标" },
+  "playback-dashboard": { label: "运行记录", hint: "查看刷视频任务执行记录" },
 };
 
 const SIDEBAR_NAV_SEARCH_INPUT_ID = "sidebar-nav-search-input";
-const SIDEBAR_RECENT_SECTIONS_KEY = "sidebar-recent-sections-v1";
-const SIDEBAR_RECENT_LIMIT = 5;
-
-const SIDEBAR_ALL_NAV_ITEMS = [
-  ...DINGTALK_PRIMARY_STANDALONE_NAV_ITEMS,
-  ...DINGTALK_FEATURE_GROUP_NAV.items,
-  GUIDE_NAV_ITEM,
-  ...PLAYBACK_NAV_ITEMS,
-];
-
-const SIDEBAR_NAV_ITEM_INDEX = Object.fromEntries(
-  SIDEBAR_ALL_NAV_ITEMS.map((item) => [item.id, item]),
-);
 
 const PLAYBACK_SECTIONS = new Set(PLAYBACK_NAV_ITEMS.map((item) => item.id));
 
@@ -158,6 +149,31 @@ const quickChecklist = [
   "再核对今日上午 / 下午随机执行时间",
   "最后执行自检或试运行，不要直接启动",
 ];
+
+const initialPlaybackOverviewState = {
+  ready: false,
+  loading: false,
+  error: "",
+  deviceCount: 0,
+  onlineCount: 0,
+  unauthorizedCount: 0,
+  selectedSerial: "",
+  isRunning: false,
+  startedAt: "",
+  lastUpdatedAt: "",
+  currentAppName: "",
+  totalCycles: 0,
+  recentLogDetail: "",
+};
+
+const initialDeviceCenterState = {
+  ready: false,
+  loading: false,
+  error: "",
+  partialError: "",
+  devices: [],
+  updatedAtLabel: "",
+};
 
 const configGroups = [
   {
@@ -330,6 +346,13 @@ const actions = [
     note: "按已保存的 remote_adb_target 执行 adb disconnect。",
   },
   {
+    label: "远程连通诊断",
+    style: "secondary",
+    icon: Search,
+    group: "support",
+    note: "一次性检查 DNS、TCP 和 adb 设备链路。",
+  },
+  {
     label: "在线安装 ADB",
     style: "secondary",
     icon: Download,
@@ -406,6 +429,12 @@ const toggleDefinitions = [
     enabledNote: "执行前通过在线接口判断是否为工作日。",
     disabledNote: "忽略工作日接口，每天都按本地排期执行。",
   },
+  {
+    label: "远程 ADB 自动连接",
+    key: "enable_auto_remote_adb_connect",
+    enabledNote: "无在线设备时，监控页会自动尝试连接 remote_adb_target。",
+    disabledNote: "仅在你手动点击“连接远程 ADB”时才发起连接。",
+  },
 ];
 
 const guards = [
@@ -427,7 +456,10 @@ const initialConfigState = Object.fromEntries(
 );
 
 const initialToggleState = Object.fromEntries(
-  toggleDefinitions.map((item) => [item.label, item.key === "enable_workday_check"]),
+  toggleDefinitions.map((item) => [
+    item.label,
+    item.key === "enable_workday_check" || item.key === "enable_auto_remote_adb_connect",
+  ]),
 );
 
 const initialWindowState = Object.fromEntries(
@@ -795,6 +827,21 @@ function formatDeviceConnectionNote(deviceState) {
   return `${serial} / ${mode} / ${adbSource}`;
 }
 
+function formatAndroidDeviceStateLabel(state) {
+  if (state === "device") return "在线";
+  if (state === "unauthorized") return "未授权";
+  if (state === "offline") return "离线";
+  if (!state) return "未知";
+  return state;
+}
+
+function androidDeviceStateTone(state) {
+  if (state === "device") return "success";
+  if (state === "unauthorized") return "warning";
+  if (state === "offline") return "destructive";
+  return "secondary";
+}
+
 function App() {
   const [theme, setTheme] = useState(() => {
     const saved =
@@ -829,6 +876,8 @@ function App() {
   const [savedWindowValues, setSavedWindowValues] = useState(initialWindowState);
   const [checkinRecords, setCheckinRecords] = useState([]);
   const [checkinRecordsLoading, setCheckinRecordsLoading] = useState(false);
+  const [playbackOverview, setPlaybackOverview] = useState(initialPlaybackOverviewState);
+  const [deviceCenter, setDeviceCenter] = useState(initialDeviceCenterState);
   const [recordFilter, setRecordFilter] = useState({ date: "", type: "", status: "" });
   const [recordPage, setRecordPage] = useState(1);
   const [recordPageSize, setRecordPageSize] = useState(10);
@@ -845,6 +894,7 @@ function App() {
         "刷新设备状态",
         "连接远程 ADB",
         "断开远程 ADB",
+        "远程连通诊断",
         "在线安装 ADB",
         "重启 ADB",
         "连接向导",
@@ -922,9 +972,161 @@ function App() {
     [hydrateDashboard],
   );
 
+  const refreshPlaybackOverview = useCallback(
+    async ({ silent = false } = {}) => {
+      if (!silent) {
+        setPlaybackOverview((current) => ({ ...current, loading: true }));
+      }
+
+      try {
+        const list = await fetchPlaybackDevices();
+        const devices = Array.isArray(list) ? list : [];
+        const onlineDevices = devices.filter((item) => item?.state === "device");
+        const unauthorizedCount = devices.filter((item) => item?.state === "unauthorized").length;
+        const activeSerial =
+          devices.find((item) => item?.serial === playbackOverview.selectedSerial)?.serial
+          || onlineDevices[0]?.serial
+          || devices[0]?.serial
+          || "";
+
+        let dashboardSnapshot = null;
+        let dashboardError = "";
+
+        if (activeSerial) {
+          try {
+            dashboardSnapshot = await fetchPlaybackProgramDashboard(activeSerial);
+          } catch (error) {
+            dashboardError = error instanceof Error ? error.message : "读取刷视频运行记录失败";
+          }
+        }
+
+        setPlaybackOverview({
+          ready: true,
+          loading: false,
+          error: dashboardError,
+          deviceCount: devices.length,
+          onlineCount: onlineDevices.length,
+          unauthorizedCount,
+          selectedSerial: activeSerial,
+          isRunning: Boolean(dashboardSnapshot?.isRunning),
+          startedAt: String(dashboardSnapshot?.startedAt || ""),
+          lastUpdatedAt: String(dashboardSnapshot?.lastUpdatedAt || ""),
+          currentAppName: String(
+            dashboardSnapshot?.currentAppName
+            || dashboardSnapshot?.currentAppPackageName
+            || "",
+          ),
+          totalCycles: Number(dashboardSnapshot?.totalCycles) || 0,
+          recentLogDetail: String(dashboardSnapshot?.recentLogs?.[0]?.detail || ""),
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "读取刷视频设备状态失败";
+        setPlaybackOverview({
+          ...initialPlaybackOverviewState,
+          ready: true,
+          loading: false,
+          error: message,
+        });
+      }
+    },
+    [playbackOverview.selectedSerial],
+  );
+
+  const refreshDeviceCenter = useCallback(
+    async ({ silent = false } = {}) => {
+      if (!silent) {
+        setDeviceCenter((current) => ({ ...current, loading: true }));
+      }
+
+      const merged = new Map();
+      const insertDevice = (item, sourceLabel) => {
+        const serial = String(item?.serial || "").trim();
+        if (!serial) return;
+        const state = String(item?.state || "").trim() || "unknown";
+        const existing = merged.get(serial);
+        if (existing) {
+          merged.set(serial, {
+            ...existing,
+            state: existing.state === "device" ? existing.state : state,
+            usbConnected: existing.usbConnected || Boolean(item?.usbConnected),
+            sources: Array.from(new Set([...existing.sources, sourceLabel])),
+          });
+          return;
+        }
+        merged.set(serial, {
+          serial,
+          state,
+          usbConnected: Boolean(item?.usbConnected),
+          sources: [sourceLabel],
+        });
+      };
+
+      const dingtalkDevices = Array.isArray(dashboard?.device?.devices)
+        ? dashboard.device.devices
+        : [];
+      dingtalkDevices.forEach((item) => insertDevice(item, "打卡后端"));
+
+      let playbackError = "";
+      try {
+        const playbackDevices = await fetchPlaybackDevices();
+        const list = Array.isArray(playbackDevices) ? playbackDevices : [];
+        list.forEach((item) => insertDevice(item, "刷视频后端"));
+      } catch (error) {
+        playbackError = error instanceof Error ? error.message : "读取刷视频设备失败";
+      }
+
+      const statePriority = { device: 0, unauthorized: 1, offline: 2, unknown: 3 };
+      const devices = Array.from(merged.values()).sort((left, right) => {
+        const lp = statePriority[left.state] ?? 9;
+        const rp = statePriority[right.state] ?? 9;
+        if (lp !== rp) return lp - rp;
+        return left.serial.localeCompare(right.serial);
+      });
+
+      const fallbackError = dashboard?.device?.error || "未检测到已连接安卓设备。";
+      const hardError = devices.length === 0 ? (playbackError || fallbackError) : "";
+      const partialError = devices.length > 0 ? playbackError : "";
+      setDeviceCenter({
+        ready: true,
+        loading: false,
+        error: hardError,
+        partialError,
+        devices,
+        updatedAtLabel: new Date().toLocaleString("zh-CN", { hour12: false }),
+      });
+    },
+    [dashboard?.device?.devices, dashboard?.device?.error],
+  );
+
   useEffect(() => {
     refreshDashboard({ silent: true }).catch(() => {});
   }, [refreshDashboard]);
+
+  useEffect(() => {
+    if (activeSection !== "overview") return undefined;
+
+    refreshPlaybackOverview({ silent: playbackOverview.ready }).catch(() => {});
+
+    const intervalId = window.setInterval(() => {
+      if (document.visibilityState === "hidden") return;
+      refreshPlaybackOverview({ silent: true }).catch(() => {});
+    }, 15000);
+
+    return () => window.clearInterval(intervalId);
+  }, [activeSection, playbackOverview.ready, refreshPlaybackOverview]);
+
+  useEffect(() => {
+    if (activeSection !== "device-management") return undefined;
+
+    refreshDeviceCenter({ silent: deviceCenter.ready }).catch(() => {});
+
+    const intervalId = window.setInterval(() => {
+      if (document.visibilityState === "hidden") return;
+      refreshDeviceCenter({ silent: true }).catch(() => {});
+    }, 12000);
+
+    return () => window.clearInterval(intervalId);
+  }, [activeSection, deviceCenter.ready, refreshDeviceCenter]);
 
   useEffect(() => {
     if (!dashboardReady) return undefined;
@@ -1043,6 +1245,147 @@ function App() {
     () => getLatestSuccessSummary(checkinRecords, dashboard?.generatedAt),
     [checkinRecords, dashboard?.generatedAt],
   );
+  const todayCheckinStats = useMemo(() => {
+    const today = getCurrentBeijingDateStamp();
+    return checkinRecords.reduce(
+      (acc, record) => {
+        if (record?.date !== today) return acc;
+        const normalizedStatus = String(record?.status || "");
+        if (normalizedStatus.includes("成功")) acc.success += 1;
+        else if (normalizedStatus.includes("失败")) acc.failed += 1;
+        else acc.other += 1;
+        return acc;
+      },
+      { date: today, success: 0, failed: 0, other: 0 },
+    );
+  }, [checkinRecords]);
+
+  const monitorSnapshotCards = useMemo(() => {
+    const dingtalkAlerts = (dashboard?.alerts ?? []).filter(
+      (item) => item?.title && item.title !== "当前没有阻断性告警",
+    );
+    const dingtalkTone = !dashboardReady
+      ? "secondary"
+      : apiError
+      ? "warning"
+      : dashboard?.scheduler?.running && dashboard?.device?.ready
+        ? "success"
+        : dashboard?.device?.error
+          ? "destructive"
+          : "secondary";
+
+    const playbackTone = !playbackOverview.ready || playbackOverview.loading
+      ? "secondary"
+      : playbackOverview.error
+      ? "warning"
+      : playbackOverview.isRunning
+        ? "success"
+        : playbackOverview.onlineCount > 0
+          ? "secondary"
+          : "warning";
+
+    return [
+      {
+        id: "dingtalk",
+        title: "自动钉钉打卡",
+        icon: Bot,
+        tone: dingtalkTone,
+        statusText: !dashboardReady
+          ? "状态读取中"
+          : apiError
+          ? "后端离线"
+          : dashboard?.scheduler?.running
+            ? "调度运行中"
+            : "调度未启动",
+        rows: [
+          {
+            label: "设备状态",
+            value: dashboard?.device?.error
+              ? `异常 / ${dashboard.device.error}`
+              : dashboard?.device?.summary || "待同步",
+          },
+          {
+            label: "今日打卡",
+            value: `${todayCheckinStats.success} 成功 / ${todayCheckinStats.failed} 失败`,
+          },
+          {
+            label: "下一执行",
+            value: pendingWindowSummary.time || "待排期",
+          },
+          {
+            label: "告警数量",
+            value: dingtalkAlerts.length > 0 ? `${dingtalkAlerts.length} 条` : "无阻断告警",
+          },
+        ],
+        detail: latestSuccessSummary.headline === "暂无完成记录"
+          ? "今日尚无成功记录，建议先试运行。"
+          : `最近成功：${latestSuccessSummary.headline} ${latestSuccessSummary.time}`,
+        actions: [
+          { key: "goto-actions", label: "任务配置", target: "actions" },
+          { key: "goto-logs", label: "告警日志", target: "logs" },
+        ],
+      },
+      {
+        id: "playback",
+        title: "自动刷视频",
+        icon: CirclePlay,
+        tone: playbackTone,
+        statusText: !playbackOverview.ready || playbackOverview.loading
+          ? "状态读取中"
+          : playbackOverview.error
+          ? "服务不可达"
+          : playbackOverview.isRunning
+            ? "程序运行中"
+            : "程序未运行",
+        rows: [
+          {
+            label: "设备在线",
+            value: `${playbackOverview.onlineCount}/${playbackOverview.deviceCount}`,
+          },
+          {
+            label: "目标设备",
+            value: playbackOverview.selectedSerial || "未发现设备",
+          },
+          {
+            label: "当前应用",
+            value: playbackOverview.currentAppName || "-",
+          },
+          {
+            label: "最近更新",
+            value: playbackOverview.lastUpdatedAt ? formatPlaybackDateTime(playbackOverview.lastUpdatedAt) : "-",
+          },
+        ],
+        detail: playbackOverview.error
+          ? playbackOverview.error
+          : playbackOverview.recentLogDetail
+            ? `最新日志：${playbackOverview.recentLogDetail}`
+            : `累计循环 ${playbackOverview.totalCycles} 次`,
+        actions: [
+          {
+            key: "goto-playback-dashboard",
+            label: "运行记录",
+            target: "playback-dashboard",
+          },
+          {
+            key: "goto-playback-devices",
+            label: "任务配置",
+            target: "playback-devices",
+          },
+        ],
+      },
+    ];
+  }, [
+    dashboardReady,
+    apiError,
+    dashboard,
+    latestSuccessSummary.headline,
+    latestSuccessSummary.time,
+    pendingWindowSummary.time,
+    playbackOverview,
+    todayCheckinStats.failed,
+    todayCheckinStats.success,
+  ]);
+
   const remoteAdbSummary = useMemo(() => {
     const deviceState = dashboard?.device;
     const remoteAdbState = dashboard?.remoteAdb;
@@ -1840,6 +2183,8 @@ function App() {
       } else if (label === "断开远程 ADB") {
         toastMethod = "warning";
         response = await disconnectRemoteAdb();
+      } else if (label === "远程连通诊断") {
+        response = await diagnoseRemoteAdb();
       } else if (label === "在线安装 ADB") {
         response = await installAdb();
       } else if (label === "重启 ADB") {
@@ -1982,23 +2327,33 @@ function App() {
         run: () => handleNavClick(undefined, "guide"),
       },
       {
+        id: "goto-device-management",
+        group: "导航",
+        label: "前往 设备管理",
+        hint: "查看所有已连接安卓设备",
+        icon: Smartphone,
+        shortcut: "G M",
+        keywords: "device management 设备 adb 安卓",
+        run: () => handleNavClick(undefined, "device-management"),
+      },
+      {
         id: "goto-playback-devices",
         group: "导航",
-        label: "前往 刷视频设备管理",
-        hint: "进入 Playback 设备页",
-        icon: Smartphone,
+        label: "前往 刷视频任务配置",
+        hint: "进入 Playback 任务配置页",
+        icon: FolderCog,
         shortcut: "G D",
-        keywords: "playback devices 设备",
+        keywords: "playback devices 设备 任务配置",
         run: () => handleNavClick(undefined, "playback-devices"),
       },
       {
         id: "goto-playback-dashboard",
         group: "导航",
-        label: "前往 刷视频运行看板",
-        hint: "进入 Playback 看板页",
+        label: "前往 刷视频运行记录",
+        hint: "进入 Playback 运行记录页",
         icon: ListChecks,
         shortcut: "G B",
-        keywords: "playback dashboard 看板",
+        keywords: "playback dashboard 看板 运行记录",
         run: () => handleNavClick(undefined, "playback-dashboard"),
       },
       {
@@ -2088,6 +2443,17 @@ function App() {
         keywords: "refresh 刷新",
         visible: activeProject === "dingtalk",
         run: () => handleAction("刷新设备状态"),
+      },
+      {
+        id: "action-remote-diagnose",
+        group: "操作",
+        label: "执行 远程连通诊断",
+        hint: "检查 DNS、TCP 和 adb 目标状态",
+        icon: Search,
+        shortcut: "A T",
+        keywords: "diagnose remote adb 诊断",
+        visible: activeProject === "dingtalk",
+        run: () => handleAction("远程连通诊断"),
       },
     ],
     [activeProject, handleAction, handleNavClick, handleProjectSwitch],
@@ -2434,8 +2800,21 @@ function App() {
             detail: "当前展示的是后端真实配置，修改后需要显式保存才会生效。",
           };
 
+  const deviceCenterSummary = useMemo(() => {
+    const list = deviceCenter.devices;
+    return {
+      total: list.length,
+      online: list.filter((item) => item.state === "device").length,
+      unauthorized: list.filter((item) => item.state === "unauthorized").length,
+      offline: list.filter((item) => item.state === "offline").length,
+    };
+  }, [deviceCenter.devices]);
+
   const showTopbar = !(activeProject === "dingtalk" && activeSection === "guide");
-  const showBottomStickyMenu = activeProject === "dingtalk" && activeSection !== "guide";
+  const showBottomStickyMenu =
+    activeProject === "dingtalk" &&
+    activeSection !== "guide" &&
+    activeSection !== "device-management";
 
   return (
     <div
@@ -2546,7 +2925,7 @@ function App() {
             {activeSection === "overview" ? (
                 <RegionSection
                   title="监控总览与执行态势"
-                  description="用于查看系统状态、关键指标和执行判断。"
+                  description="集中查看自动钉钉打卡与自动刷视频的关键运行状态。"
                 >
               <div className="dashboard-layout">
                 <section id="overview" className="dashboard-block dashboard-block--wide fade-up scroll-mt-28" style={{ "--delay": "60ms" }}>
@@ -2602,6 +2981,16 @@ function App() {
                       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
                         {metrics.map((item, index) => (
                           <MetricCard key={item.label} item={item} delay={`${120 + index * 60}ms`} />
+                        ))}
+                      </div>
+
+                      <div className="grid gap-4 lg:grid-cols-2">
+                        {monitorSnapshotCards.map((item) => (
+                          <ProjectMonitorCard
+                            key={item.id}
+                            item={item}
+                            onNavigate={(target) => handleNavClick(undefined, target)}
+                          />
                         ))}
                       </div>
 
@@ -2734,6 +3123,109 @@ function App() {
                           <SummaryRow key={label} label={label} value={value} emphasized={emphasized} />
                         ))}
                       </div>
+                    </CardContent>
+                  </Card>
+                </section>
+              </div>
+            </RegionSection>
+            ) : null}
+
+            {activeSection === "device-management" ? (
+            <RegionSection
+              title="设备管理"
+              description="独立展示所有已连接安卓设备。"
+            >
+              <div className="dashboard-layout">
+                <section id="device-management" className="dashboard-block dashboard-block--wide fade-up scroll-mt-28" style={{ "--delay": "120ms" }}>
+                  <Card className="region-card h-full">
+                    <CardHeader className="flex flex-col gap-4 border-b sm:flex-row sm:items-center sm:justify-between">
+                      <div className="space-y-2">
+                        <CardTitle>安卓设备列表</CardTitle>
+                        <CardDescription>汇总显示当前已连接设备（USB / 远程 ADB）。</CardDescription>
+                      </div>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="gap-2"
+                        onClick={() => refreshDeviceCenter({ silent: false })}
+                        disabled={deviceCenter.loading}
+                      >
+                        <RefreshCw className={cn("size-4", deviceCenter.loading && "animate-spin")} />
+                        <span>刷新设备</span>
+                      </Button>
+                    </CardHeader>
+                    <CardContent className="region-card-content space-y-4 pt-4">
+                      <div className="grid gap-3 md:grid-cols-4">
+                        <SummaryRow label="设备总数" value={`${deviceCenterSummary.total}`} emphasized />
+                        <SummaryRow label="在线设备" value={`${deviceCenterSummary.online}`} />
+                        <SummaryRow label="未授权设备" value={`${deviceCenterSummary.unauthorized}`} />
+                        <SummaryRow label="离线设备" value={`${deviceCenterSummary.offline}`} />
+                      </div>
+
+                      {!deviceCenter.ready || (deviceCenter.loading && deviceCenterSummary.total === 0) ? (
+                        <SectionState
+                          icon={RefreshCw}
+                          title="正在读取设备列表"
+                          detail="正在同步安卓设备连接状态，请稍候。"
+                          loading
+                        />
+                      ) : null}
+
+                      {deviceCenter.error && deviceCenterSummary.total === 0 ? (
+                        <SectionState
+                          icon={TriangleAlert}
+                          tone="warning"
+                          title="设备列表暂不可用"
+                          detail={deviceCenter.error}
+                          actionLabel="重新刷新"
+                          onAction={() => refreshDeviceCenter({ silent: false })}
+                        />
+                      ) : null}
+
+                      {deviceCenter.partialError && deviceCenterSummary.total > 0 ? (
+                        <Card className="border-amber-200 bg-amber-50/80 dark:border-amber-900/40 dark:bg-amber-950/20">
+                          <CardContent className="p-4 text-sm text-amber-700 dark:text-amber-300">
+                            部分数据源不可用：{deviceCenter.partialError}
+                          </CardContent>
+                        </Card>
+                      ) : null}
+
+                      {deviceCenterSummary.total > 0 ? (
+                        <div className="overflow-x-auto rounded-lg border">
+                          <table className="min-w-full border-collapse text-sm">
+                            <thead>
+                              <tr className="bg-muted/30 text-left">
+                                <th className="border-b px-3 py-2">设备 serial</th>
+                                <th className="border-b px-3 py-2">状态</th>
+                                <th className="border-b px-3 py-2">连接类型</th>
+                                <th className="border-b px-3 py-2">来源</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {deviceCenter.devices.map((item) => (
+                                <tr key={item.serial}>
+                                  <td className="border-b px-3 py-2 font-medium">{item.serial}</td>
+                                  <td className="border-b px-3 py-2">
+                                    <Badge variant={androidDeviceStateTone(item.state)} className="rounded-md">
+                                      {formatAndroidDeviceStateLabel(item.state)}
+                                    </Badge>
+                                  </td>
+                                  <td className="border-b px-3 py-2 text-muted-foreground">
+                                    {item.usbConnected ? "USB" : "远程 ADB / TCP"}
+                                  </td>
+                                  <td className="border-b px-3 py-2 text-muted-foreground">
+                                    {item.sources.join(" / ")}
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      ) : null}
+
+                      {deviceCenter.updatedAtLabel ? (
+                        <p className="text-xs text-muted-foreground">最近刷新：{deviceCenter.updatedAtLabel}</p>
+                      ) : null}
                     </CardContent>
                   </Card>
                 </section>
@@ -3977,32 +4469,28 @@ function SidebarNav({
   onNavClick,
   onOpenCommandPalette,
 }) {
-  const dingtalkFeatureIds = DINGTALK_FEATURE_GROUP_NAV.items.map((item) => item.id);
-  const isDingtalkFeatureActive = dingtalkFeatureIds.includes(activeSection);
-  const [featureOpen, setFeatureOpen] = useState(() => isDingtalkFeatureActive);
+  const dingtalkProjectMenuIds = DINGTALK_PROJECT_MENU_ITEMS.map((item) => item.id);
+  const isDingtalkProjectMenuActive = dingtalkProjectMenuIds.includes(activeSection);
+  const playbackProjectMenuIds = PLAYBACK_NAV_ITEMS.map((item) => item.id);
+  const isPlaybackProjectMenuActive = playbackProjectMenuIds.includes(activeSection);
+  const [dingtalkProjectOpen, setDingtalkProjectOpen] = useState(
+    () => activeProject === "dingtalk" && isDingtalkProjectMenuActive,
+  );
+  const [playbackProjectOpen, setPlaybackProjectOpen] = useState(
+    () => activeProject === "playback" && isPlaybackProjectMenuActive,
+  );
   const [navQuery, setNavQuery] = useState("");
   const [searchPanelOpen, setSearchPanelOpen] = useState(false);
-  const [recentsOpen, setRecentsOpen] = useState(false);
-  const [recentSectionIds, setRecentSectionIds] = useState(() => {
-    if (typeof window === "undefined") return [];
-    try {
-      const raw = window.localStorage.getItem(SIDEBAR_RECENT_SECTIONS_KEY);
-      if (!raw) return [];
-      const parsed = JSON.parse(raw);
-      if (!Array.isArray(parsed)) return [];
-      return parsed
-        .filter((item) => typeof item === "string" && SIDEBAR_NAV_ITEM_INDEX[item])
-        .slice(0, SIDEBAR_RECENT_LIMIT);
-    } catch {
-      return [];
-    }
-  });
   const normalizedNavQuery = navQuery.trim().toLowerCase();
   const isFiltering = normalizedNavQuery.length > 0;
 
   useEffect(() => {
-    if (activeProject === "dingtalk" && isDingtalkFeatureActive) setFeatureOpen(true);
-  }, [activeProject, isDingtalkFeatureActive]);
+    if (activeProject === "dingtalk" && isDingtalkProjectMenuActive) setDingtalkProjectOpen(true);
+  }, [activeProject, isDingtalkProjectMenuActive]);
+
+  useEffect(() => {
+    if (activeProject === "playback" && isPlaybackProjectMenuActive) setPlaybackProjectOpen(true);
+  }, [activeProject, isPlaybackProjectMenuActive]);
 
   useEffect(() => {
     if (!collapsed) return;
@@ -4021,22 +4509,12 @@ function SidebarNav({
   }, [collapsed]);
 
   useEffect(() => {
-    if (activeProject === "dingtalk" && isFiltering) setFeatureOpen(true);
+    if (activeProject === "dingtalk" && isFiltering) setDingtalkProjectOpen(true);
   }, [activeProject, isFiltering]);
 
   useEffect(() => {
-    if (!SIDEBAR_NAV_ITEM_INDEX[activeSection]) return;
-    setRecentSectionIds((current) => {
-      const next = [activeSection, ...current.filter((item) => item !== activeSection)].slice(
-        0,
-        SIDEBAR_RECENT_LIMIT,
-      );
-      if (typeof window !== "undefined") {
-        window.localStorage.setItem(SIDEBAR_RECENT_SECTIONS_KEY, JSON.stringify(next));
-      }
-      return next;
-    });
-  }, [activeSection]);
+    if (activeProject === "playback" && isFiltering) setPlaybackProjectOpen(true);
+  }, [activeProject, isFiltering]);
 
   const matchesQuery = useCallback(
     (item) => {
@@ -4047,35 +4525,28 @@ function SidebarNav({
     [isFiltering, normalizedNavQuery],
   );
 
-  const filteredDingtalkPrimaryItems = DINGTALK_PRIMARY_STANDALONE_NAV_ITEMS.filter(matchesQuery);
-  const filteredDingtalkFeatureItems = DINGTALK_FEATURE_GROUP_NAV.items.filter(matchesQuery);
+  const filteredDingtalkProjectItems = DINGTALK_PROJECT_MENU_ITEMS.filter(matchesQuery);
   const filteredPlaybackItems = PLAYBACK_NAV_ITEMS.filter(matchesQuery);
   const showGuideItem = matchesQuery(GUIDE_NAV_ITEM);
-  const filteredRecentSectionIds = recentSectionIds.filter((id) => {
-    const item = SIDEBAR_NAV_ITEM_INDEX[id];
-    if (!item) return false;
-    return matchesQuery(item);
-  });
+  const dingtalkProjectVisibleItems = isFiltering
+    ? filteredDingtalkProjectItems
+    : DINGTALK_PROJECT_MENU_ITEMS;
+  const playbackProjectVisibleItems = isFiltering ? filteredPlaybackItems : PLAYBACK_NAV_ITEMS;
   const hasSearchResult =
     activeProject === "dingtalk"
-      ? filteredDingtalkPrimaryItems.length > 0 ||
-        filteredDingtalkFeatureItems.length > 0 ||
-        showGuideItem ||
-        filteredRecentSectionIds.length > 0
-      : filteredPlaybackItems.length > 0 || filteredRecentSectionIds.length > 0;
+      ? filteredDingtalkProjectItems.length > 0 || showGuideItem
+      : filteredPlaybackItems.length > 0;
 
-  const quickActionItems =
-    activeProject === "dingtalk"
-      ? [
-          { id: "overview", label: "运行总览", icon: Gauge, shortcut: "⌘1" },
-          { id: "search", label: "搜索", icon: Search, shortcut: "⌘K", type: "search" },
-          { id: "guide", label: "使用说明", icon: CircleHelp, shortcut: "⌘/" },
-        ]
-      : [
-          { id: "playback-devices", label: "设备管理", icon: Smartphone, shortcut: "⌘1" },
-          { id: "search", label: "搜索", icon: Search, shortcut: "⌘K", type: "search" },
-          { id: "playback-dashboard", label: "运行看板", icon: ListChecks, shortcut: "⌘2" },
-        ];
+  const monitorQuickItem = { id: "overview", label: "监控页面", icon: Gauge, shortcut: "⌘1" };
+  const quickActionItems = [
+    monitorQuickItem,
+    { id: "search", label: "搜索", icon: Search, shortcut: "⌘K", type: "search" },
+    { id: "device-management", label: "设备管理", icon: Smartphone, shortcut: "⌘2" },
+  ];
+  const dingtalkProjectItem = PROJECT_NAV_ITEMS[0];
+  const playbackProjectItem = PROJECT_NAV_ITEMS[1];
+  const DingtalkProjectIcon = dingtalkProjectItem.icon;
+  const PlaybackProjectIcon = playbackProjectItem.icon;
 
   const renderNavItem = (item, options = {}) => {
     const Icon = item.icon;
@@ -4148,11 +4619,11 @@ function SidebarNav({
         aria-label={item.label}
         aria-current={isActive ? "page" : undefined}
         className={cn(
-          "group flex h-8 w-full items-center gap-3 rounded-lg px-3 text-sm transition-colors",
-          collapsed ? "lg:h-10 lg:w-[var(--sidebar-inner-size)] lg:justify-center lg:px-0" : "justify-start",
+          "group flex h-10 w-full items-center gap-2 overflow-hidden rounded-md border px-2 text-sm leading-6 transition-[width,padding,gap,background-color,color,border-color] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]",
+          collapsed ? "lg:h-10 lg:w-[var(--sidebar-inner-size)] lg:justify-center lg:px-0 lg:gap-0" : "justify-start",
           isActive
-            ? "bg-accent text-accent-foreground"
-            : "text-muted-foreground hover:bg-muted/40 hover:text-foreground",
+            ? "border-border bg-accent text-accent-foreground"
+            : "border-transparent text-muted-foreground hover:border-border hover:bg-accent hover:text-accent-foreground",
         )}
         onClick={(event) => {
           if (isSearch) {
@@ -4171,7 +4642,7 @@ function SidebarNav({
         <span
           className={cn(
             "truncate text-sm transition-[max-width,opacity] duration-150",
-            collapsed ? "lg:pointer-events-none lg:absolute lg:max-w-0 lg:opacity-0" : "max-w-[10rem] opacity-100",
+            collapsed ? "lg:pointer-events-none lg:absolute lg:max-w-0 lg:opacity-0" : "max-w-[11rem] opacity-100",
           )}
         >
           {item.label}
@@ -4185,36 +4656,6 @@ function SidebarNav({
     );
   };
 
-  const renderRecentItem = (id) => {
-    const item = SIDEBAR_NAV_ITEM_INDEX[id];
-    if (!item) return null;
-    const Icon = item.icon;
-    const isActive = activeSection === id;
-    const projectTag = PLAYBACK_SECTIONS.has(id) ? "刷视频" : "钉钉";
-    return (
-      <a
-        key={id}
-        href={`#${id}`}
-        data-sidebar-item="true"
-        data-sidebar-icon-animate="true"
-        data-sidebar-cursor-block="true"
-        className={cn(
-          "group flex h-8 w-full items-center gap-2 rounded-md px-2 text-sm transition-colors",
-          isActive
-            ? "bg-accent text-accent-foreground"
-            : "text-muted-foreground hover:bg-muted/40 hover:text-foreground",
-        )}
-        onClick={(event) => onNavClick(event, id)}
-      >
-        <Icon className="size-3.5 shrink-0" />
-        <span className="truncate text-sm">{item.label}</span>
-        <span className="ml-auto rounded-full bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground opacity-0 transition-opacity duration-100 group-hover:opacity-100">
-          {projectTag}
-        </span>
-      </a>
-    );
-  };
-
   return (
     <nav
       className={cn(
@@ -4224,7 +4665,7 @@ function SidebarNav({
       style={{ "--delay": "100ms" }}
     >
       <div className={cn("flex h-full min-h-0 flex-col gap-3", collapsed && "lg:w-[var(--sidebar-inner-size)]")}>
-        <div className="space-y-1">{quickActionItems.map((item) => renderQuickActionItem(item))}</div>
+        <div className="space-y-2">{quickActionItems.map((item) => renderQuickActionItem(item))}</div>
 
         {!collapsed && searchPanelOpen ? (
           <div className="space-y-1">
@@ -4261,175 +4702,208 @@ function SidebarNav({
         <Separator />
 
         <div className={cn("flex min-h-0 flex-1 flex-col gap-4", collapsed && "lg:w-full lg:items-center")}>
-        <div className="space-y-2">
-          {!collapsed ? (
-            <p className="px-1 text-[11px] uppercase tracking-[0.14em] text-muted-foreground">项目</p>
-          ) : null}
-          <div className={cn("space-y-2", collapsed && "lg:w-[var(--sidebar-inner-size)]")}>
-          {PROJECT_NAV_ITEMS.map((item) => {
-            const isActive = activeProject === item.id;
-            return renderNavItem(item, {
-              active: isActive,
-              muted: !isActive,
-              noHover: true,
-              onClick: (event) => {
-                event.preventDefault();
-                onProjectSwitch(item.id);
-              },
-            });
-          })}
-          </div>
-        </div>
-
-          <Separator />
-
-          <div className="flex min-h-0 flex-1 flex-col overflow-y-auto pr-1">
-            {activeProject === "dingtalk" ? (
-              <div className={cn("space-y-4", collapsed && "lg:w-[var(--sidebar-inner-size)]")}>
-                {!collapsed ? (
-                  <p className="px-1 text-[11px] uppercase tracking-[0.14em] text-muted-foreground">导航</p>
-                ) : null}
-
-                {filteredDingtalkPrimaryItems.map((item) => renderNavItem(item))}
-
-                {!isFiltering || filteredDingtalkFeatureItems.length > 0 ? (
-                  <div className={cn("space-y-2", collapsed && "lg:w-[var(--sidebar-inner-size)]")}>
-                    <button
-                      type="button"
-                      data-sidebar-item="true"
-                      data-sidebar-icon-animate="false"
-                      data-sidebar-cursor-block="true"
-                      title={DINGTALK_FEATURE_GROUP_NAV.label}
-                      aria-label={DINGTALK_FEATURE_GROUP_NAV.label}
-                      aria-expanded={!collapsed ? featureOpen : undefined}
-                      className={cn(
-                        "flex h-10 w-full items-center gap-2 overflow-hidden rounded-md border px-2 text-sm leading-6 transition-[width,padding,gap,background-color,color,border-color] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] focus:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                        collapsed && "lg:h-10 lg:w-[var(--sidebar-inner-size)] lg:justify-center lg:px-0 lg:gap-0",
-                        isDingtalkFeatureActive
-                          ? "border-border bg-accent text-accent-foreground"
-                          : "border-transparent text-muted-foreground",
-                      )}
-                      onClick={(event) => {
-                        if (collapsed) {
-                          onNavClick(event, DINGTALK_FEATURE_GROUP_NAV.items[0].id);
-                          return;
-                        }
-                        setFeatureOpen((value) => !value);
-                      }}
-                    >
-                      <DINGTALK_FEATURE_GROUP_NAV.icon className="size-4.5 shrink-0" />
-                      <span
-                        className={cn(
-                          "font-medium whitespace-nowrap transition-[max-width,opacity,transform] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]",
-                          collapsed
-                            ? "lg:pointer-events-none lg:absolute lg:max-w-0 lg:opacity-0 lg:-translate-x-1"
-                            : "lg:max-w-[11rem] lg:opacity-100 lg:translate-x-0",
-                        )}
-                      >
-                        {DINGTALK_FEATURE_GROUP_NAV.label}
-                      </span>
-                      {!collapsed ? (
-                        <div className="ml-auto flex items-center gap-1.5">
-                          <span className="inline-flex min-w-5 items-center justify-center rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-semibold text-muted-foreground">
-                            {filteredDingtalkFeatureItems.length}
-                          </span>
-                          <ChevronDown
-                            className={cn(
-                              "size-4 shrink-0 text-muted-foreground transition-transform duration-200 ease-out",
-                              featureOpen && "rotate-180",
-                            )}
-                          />
-                        </div>
-                      ) : null}
-                    </button>
-
-                    {!collapsed ? (
-                      <div
-                        className={cn(
-                          "grid transition-[grid-template-rows,opacity] duration-200 ease-out",
-                          featureOpen ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0",
-                        )}
-                      >
-                        <div className="overflow-hidden">
-                          <div className="ml-3 space-y-2 border-l border-border/70 pl-3">
-                            {filteredDingtalkFeatureItems.map((item) => {
-                              const ItemIcon = item.icon;
-                              const itemActive = activeSection === item.id;
-                              return (
-                                <a
-                                  key={item.id}
-                                  href={`#${item.id}`}
-                                  data-sidebar-item="true"
-                                  data-sidebar-icon-animate="true"
-                                  data-sidebar-cursor-block="true"
-                                  title={item.label}
-                                  aria-label={item.label}
-                                  aria-current={itemActive ? "page" : undefined}
-                                  className={cn(
-                                    "flex h-9 w-full items-center gap-2 rounded-md border px-2 text-sm leading-6 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                                    itemActive
-                                      ? "border-border bg-accent text-accent-foreground"
-                                      : "border-transparent text-muted-foreground hover:border-border hover:bg-accent hover:text-accent-foreground",
-                                  )}
-                                  onClick={(event) => onNavClick(event, item.id)}
-                                >
-                                  <ItemIcon className="size-4 shrink-0" />
-                                  <span className="font-medium">{item.label}</span>
-                                </a>
-                              );
-                            })}
-                          </div>
-                        </div>
-                      </div>
-                    ) : null}
-                  </div>
-                ) : null}
-
-                {isFiltering && !hasSearchResult ? (
-                  <div className="rounded-md border border-dashed border-border/70 bg-muted/20 p-3 text-xs text-muted-foreground">
-                    未找到匹配导航，可尝试更换关键词。
-                  </div>
-                ) : null}
-
-              </div>
-            ) : (
-              <div className={cn("space-y-2", collapsed && "lg:w-[var(--sidebar-inner-size)]")}>
-                {!collapsed ? (
-                  <p className="px-1 text-[11px] uppercase tracking-[0.14em] text-muted-foreground">导航</p>
-                ) : null}
-                {filteredPlaybackItems.map((item) => renderNavItem(item))}
-                {isFiltering && !hasSearchResult ? (
-                  <div className="rounded-md border border-dashed border-border/70 bg-muted/20 p-3 text-xs text-muted-foreground">
-                    未找到匹配导航，可尝试更换关键词。
-                  </div>
-                ) : null}
-              </div>
-            )}
-          </div>
-
-          {!collapsed ? (
-            <div className="border-t border-border/70 pt-3">
+          <div className="space-y-2">
+            {!collapsed ? (
+              <p className="px-1 text-[11px] uppercase tracking-[0.14em] text-muted-foreground">项目</p>
+            ) : null}
+            <div className={cn("space-y-2", collapsed && "lg:w-[var(--sidebar-inner-size)]")}>
               <button
                 type="button"
-                className="group flex w-full items-center justify-between rounded-md px-2 py-1.5 text-left text-xs text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground"
-                onClick={() => setRecentsOpen((value) => !value)}
-                aria-expanded={recentsOpen}
-                aria-label="切换最近访问分组"
+                data-sidebar-item="true"
+                data-sidebar-icon-animate="false"
+                data-sidebar-cursor-block="true"
+                title={dingtalkProjectItem.label}
+                aria-label={dingtalkProjectItem.label}
+                aria-expanded={!collapsed ? dingtalkProjectOpen : undefined}
+                className={cn(
+                  "flex h-10 w-full items-center gap-2 overflow-hidden rounded-md border px-2 text-sm leading-6 transition-[width,padding,gap,background-color,color,border-color] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] focus:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                  collapsed && "lg:h-10 lg:w-[var(--sidebar-inner-size)] lg:justify-center lg:px-0 lg:gap-0",
+                  activeProject === "dingtalk"
+                    ? "border-border bg-accent text-accent-foreground"
+                    : "border-transparent text-muted-foreground hover:border-border hover:bg-accent hover:text-accent-foreground",
+                )}
+                onClick={(event) => {
+                  event.preventDefault();
+                  if (collapsed) {
+                    onProjectSwitch("dingtalk");
+                    return;
+                  }
+                  if (activeProject !== "dingtalk") {
+                    onProjectSwitch("dingtalk");
+                    setDingtalkProjectOpen(true);
+                    return;
+                  }
+                  if (isFiltering) return;
+                  setDingtalkProjectOpen((value) => !value);
+                }}
               >
-                <span className="font-medium uppercase tracking-[0.12em]">最近访问</span>
-                <span className="text-[11px] opacity-80 transition-opacity group-hover:opacity-100">
-                  {recentsOpen ? "隐藏" : "显示"}
-                </span>
-              </button>
-              {recentsOpen ? (
-                <div className="mt-1 space-y-1">
-                  {filteredRecentSectionIds.length > 0 ? (
-                    filteredRecentSectionIds.map((id) => renderRecentItem(id))
-                  ) : (
-                    <p className="px-2 py-1 text-xs text-muted-foreground">暂无最近访问</p>
+                <DingtalkProjectIcon className="size-4.5 shrink-0" />
+                <span
+                  className={cn(
+                    "font-medium whitespace-nowrap transition-[max-width,opacity,transform] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]",
+                    collapsed
+                      ? "lg:pointer-events-none lg:absolute lg:max-w-0 lg:opacity-0 lg:-translate-x-1"
+                      : "lg:max-w-[11rem] lg:opacity-100 lg:translate-x-0",
                   )}
+                >
+                  {dingtalkProjectItem.label}
+                </span>
+                {!collapsed ? (
+                  <div className="ml-auto flex items-center gap-1.5">
+                    <span className="inline-flex min-w-5 items-center justify-center rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-semibold text-muted-foreground">
+                      {dingtalkProjectVisibleItems.length}
+                    </span>
+                    <ChevronDown
+                      className={cn(
+                        "size-4 shrink-0 text-muted-foreground transition-transform duration-200 ease-out",
+                        dingtalkProjectOpen && "rotate-180",
+                      )}
+                    />
+                  </div>
+                ) : null}
+              </button>
+
+              {!collapsed ? (
+                <div
+                  className={cn(
+                    "grid transition-[grid-template-rows,opacity] duration-200 ease-out",
+                    dingtalkProjectOpen ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0",
+                  )}
+                >
+                  <div className="overflow-hidden">
+                    <div className="ml-3 space-y-2 border-l border-border/70 pl-3">
+                      {dingtalkProjectVisibleItems.map((item) => {
+                        const ItemIcon = item.icon;
+                        const itemActive = activeSection === item.id;
+                        return (
+                          <a
+                            key={item.id}
+                            href={`#${item.id}`}
+                            data-sidebar-item="true"
+                            data-sidebar-icon-animate="true"
+                            data-sidebar-cursor-block="true"
+                            title={item.label}
+                            aria-label={item.label}
+                            aria-current={itemActive ? "page" : undefined}
+                            className={cn(
+                              "flex h-9 w-full items-center gap-2 rounded-md border px-2 text-sm leading-6 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                              itemActive
+                                ? "border-border bg-accent text-accent-foreground"
+                                : "border-transparent text-muted-foreground hover:border-border hover:bg-accent hover:text-accent-foreground",
+                            )}
+                            onClick={(event) => onNavClick(event, item.id)}
+                          >
+                            <ItemIcon className="size-4 shrink-0" />
+                            <span className="font-medium">{item.label}</span>
+                          </a>
+                        );
+                      })}
+                    </div>
+                  </div>
                 </div>
               ) : null}
+
+              <button
+                type="button"
+                data-sidebar-item="true"
+                data-sidebar-icon-animate="false"
+                data-sidebar-cursor-block="true"
+                title={playbackProjectItem.label}
+                aria-label={playbackProjectItem.label}
+                aria-expanded={!collapsed ? playbackProjectOpen : undefined}
+                className={cn(
+                  "flex h-10 w-full items-center gap-2 overflow-hidden rounded-md border px-2 text-sm leading-6 transition-[width,padding,gap,background-color,color,border-color] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] focus:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                  collapsed && "lg:h-10 lg:w-[var(--sidebar-inner-size)] lg:justify-center lg:px-0 lg:gap-0",
+                  activeProject === "playback"
+                    ? "border-border bg-accent text-accent-foreground"
+                    : "border-transparent text-muted-foreground hover:border-border hover:bg-accent hover:text-accent-foreground",
+                )}
+                onClick={(event) => {
+                  event.preventDefault();
+                  if (collapsed) {
+                    onProjectSwitch("playback");
+                    return;
+                  }
+                  if (activeProject !== "playback") {
+                    onProjectSwitch("playback");
+                    setPlaybackProjectOpen(true);
+                    return;
+                  }
+                  if (isFiltering) return;
+                  setPlaybackProjectOpen((value) => !value);
+                }}
+              >
+                <PlaybackProjectIcon className="size-4.5 shrink-0" />
+                <span
+                  className={cn(
+                    "font-medium whitespace-nowrap transition-[max-width,opacity,transform] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]",
+                    collapsed
+                      ? "lg:pointer-events-none lg:absolute lg:max-w-0 lg:opacity-0 lg:-translate-x-1"
+                      : "lg:max-w-[11rem] lg:opacity-100 lg:translate-x-0",
+                  )}
+                >
+                  {playbackProjectItem.label}
+                </span>
+                {!collapsed ? (
+                  <div className="ml-auto flex items-center gap-1.5">
+                    <span className="inline-flex min-w-5 items-center justify-center rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-semibold text-muted-foreground">
+                      {playbackProjectVisibleItems.length}
+                    </span>
+                    <ChevronDown
+                      className={cn(
+                        "size-4 shrink-0 text-muted-foreground transition-transform duration-200 ease-out",
+                        playbackProjectOpen && "rotate-180",
+                      )}
+                    />
+                  </div>
+                ) : null}
+              </button>
+
+              {!collapsed ? (
+                <div
+                  className={cn(
+                    "grid transition-[grid-template-rows,opacity] duration-200 ease-out",
+                    playbackProjectOpen ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0",
+                  )}
+                >
+                  <div className="overflow-hidden">
+                    <div className="ml-3 space-y-2 border-l border-border/70 pl-3">
+                      {playbackProjectVisibleItems.map((item) => {
+                        const ItemIcon = item.icon;
+                        const itemActive = activeSection === item.id;
+                        return (
+                          <a
+                            key={item.id}
+                            href={`#${item.id}`}
+                            data-sidebar-item="true"
+                            data-sidebar-icon-animate="true"
+                            data-sidebar-cursor-block="true"
+                            title={item.label}
+                            aria-label={item.label}
+                            aria-current={itemActive ? "page" : undefined}
+                            className={cn(
+                              "flex h-9 w-full items-center gap-2 rounded-md border px-2 text-sm leading-6 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                              itemActive
+                                ? "border-border bg-accent text-accent-foreground"
+                                : "border-transparent text-muted-foreground hover:border-border hover:bg-accent hover:text-accent-foreground",
+                            )}
+                            onClick={(event) => onNavClick(event, item.id)}
+                          >
+                            <ItemIcon className="size-4 shrink-0" />
+                            <span className="font-medium">{item.label}</span>
+                          </a>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+              ) : null}
+            </div>
+          </div>
+
+          {isFiltering && !hasSearchResult ? (
+            <div className="rounded-md border border-dashed border-border/70 bg-muted/20 p-3 text-xs text-muted-foreground">
+              未找到匹配导航，可尝试更换关键词。
             </div>
           ) : null}
 
@@ -4442,6 +4916,7 @@ function SidebarNav({
               })}
             </div>
           ) : null}
+
         </div>
       </div>
     </nav>
@@ -4681,7 +5156,7 @@ function PlaybackProjectPanel({ activeSection, onNavigate }) {
         if (!next?.isRunning) setStopRequested(false);
         setErrorText("");
       } catch (error) {
-        setErrorText(error instanceof Error ? error.message : "读取运行看板失败");
+        setErrorText(error instanceof Error ? error.message : "读取运行记录失败");
       } finally {
         if (!silent) setLoadingDashboard(false);
       }
@@ -4856,7 +5331,7 @@ function PlaybackProjectPanel({ activeSection, onNavigate }) {
         waitMaxSeconds: browseWaitMaxSeconds,
         likeChancePercent: browseLikeChancePercent,
       });
-      setActionText(result?.message || "启动程序已执行，正在进入运行看板...");
+      setActionText(result?.message || "启动程序已执行，正在进入运行记录...");
       onNavigate("playback-dashboard");
     } catch (error) {
       setErrorText(error instanceof Error ? error.message : "启动程序失败");
@@ -4923,7 +5398,7 @@ function PlaybackProjectPanel({ activeSection, onNavigate }) {
   return (
     <RegionSection
       title="自动刷视频控制台"
-      description="设备管理与运行看板，完全独立于自动钉钉打卡。"
+      description="任务配置与运行记录，完全独立于自动钉钉打卡。"
       moduleName={PLAYBACK_CONSOLE_MODULE_NAME}
     >
       <div className="dashboard-layout">
@@ -4932,7 +5407,7 @@ function PlaybackProjectPanel({ activeSection, onNavigate }) {
             <Card className="region-card h-full">
               <CardHeader className="flex flex-col gap-4 border-b sm:flex-row sm:items-center sm:justify-between">
                 <div className="space-y-2">
-                  <CardTitle>设备管理</CardTitle>
+                  <CardTitle>任务配置</CardTitle>
                   <CardDescription>选择设备与应用后，独立启动自动刷视频程序。</CardDescription>
                 </div>
                 <Button variant="outline" size="sm" className="gap-2" onClick={loadPlaybackDevices} disabled={loadingDevices}>
@@ -5014,15 +5489,10 @@ function PlaybackProjectPanel({ activeSection, onNavigate }) {
                 <Card className="bg-muted/20">
                   <CardHeader className="pb-4">
                     <CardTitle>浏览视频配置</CardTitle>
-                    <CardDescription>支持一键随机，也支持手动微调。</CardDescription>
+                    <CardDescription>支持手动微调，随机配置可在底部固定栏执行。</CardDescription>
                   </CardHeader>
                   <CardContent className="space-y-4">
-                    <div className="flex flex-wrap gap-2">
-                      <Button variant="outline" size="sm" onClick={handleRandomBrowseConfig} disabled={startingProgram}>
-                        随机配置
-                      </Button>
-                      {browseConfigText ? <p className="text-sm text-muted-foreground">{browseConfigText}</p> : null}
-                    </div>
+                    {browseConfigText ? <p className="text-sm text-muted-foreground">{browseConfigText}</p> : null}
                     <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
                       <div className="space-y-2">
                         <label className="text-xs text-muted-foreground">每应用滑动最小次数</label>
@@ -5051,19 +5521,10 @@ function PlaybackProjectPanel({ activeSection, onNavigate }) {
                 <Card className="bg-muted/20">
                   <CardHeader className="pb-4">
                     <CardTitle>动作执行</CardTitle>
-                    <CardDescription>启动自动刷视频程序与远程解锁入口。</CardDescription>
+                    <CardDescription>远程解锁入口；启动任务可在底部固定栏执行。</CardDescription>
                   </CardHeader>
                   <CardContent className="space-y-4">
                     <div className="flex flex-wrap gap-2">
-                      <Button
-                        variant="secondary"
-                        className="gap-2"
-                        onClick={handleStartProgram}
-                        disabled={disabledStartProgramButton}
-                      >
-                        <Play className="size-4" />
-                        <span>{startingProgram ? "执行中..." : "启动程序"}</span>
-                      </Button>
                       <Button
                         variant="outline"
                         className="gap-2"
@@ -5107,8 +5568,8 @@ function PlaybackProjectPanel({ activeSection, onNavigate }) {
             <Card className="region-card h-full">
               <CardHeader className="flex flex-col gap-4 border-b sm:flex-row sm:items-center sm:justify-between">
                 <div className="space-y-2">
-                  <CardTitle>运行看板</CardTitle>
-                  <CardDescription>实时展示自动刷视频执行数据，约每 1.5 秒自动刷新。</CardDescription>
+                  <CardTitle>运行记录</CardTitle>
+                  <CardDescription>实时展示自动刷视频执行数据与日志记录，约每 1.5 秒自动刷新。</CardDescription>
                 </div>
                 <div className="flex flex-wrap gap-2">
                   <Button variant="outline" size="sm" onClick={handleClearLogs} disabled={!selectedDevice || clearingLogs || exportingLogs}>
@@ -5228,6 +5689,28 @@ function PlaybackProjectPanel({ activeSection, onNavigate }) {
           </section>
         ) : null}
       </div>
+      {activeSection === "playback-devices" ? (
+        <div className="menu-outer">
+          <div className="menu-inner menu-inner--dual">
+            <button
+              type="button"
+              className="menu-link"
+              onClick={handleRandomBrowseConfig}
+              disabled={startingProgram}
+            >
+              <div>随机配置</div>
+            </button>
+            <button
+              type="button"
+              className={cn("menu-link", startingProgram && "menu-link--active")}
+              onClick={handleStartProgram}
+              disabled={disabledStartProgramButton}
+            >
+              <div>{startingProgram ? "执行中..." : "启动任务"}</div>
+            </button>
+          </div>
+        </div>
+      ) : null}
     </RegionSection>
   );
 }
@@ -5629,6 +6112,50 @@ function MetricCard({ item, delay }) {
             </Badge>
           </div>
           <p className="text-sm leading-6 text-muted-foreground">{item.note}</p>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function ProjectMonitorCard({ item, onNavigate }) {
+  const tone = item.tone ?? "secondary";
+  const toneSet = toneClasses(tone);
+  const Icon = item.icon;
+
+  return (
+    <Card className={cn("bg-muted/20", toneSet.panel)}>
+      <CardHeader className="pb-4">
+        <div className="flex items-start justify-between gap-3">
+          <div className="space-y-2">
+            <div className="flex items-center gap-2">
+              <div className={cn("flex size-8 items-center justify-center rounded-md border", toneSet.icon)}>
+                <Icon className="size-4" />
+              </div>
+              <CardTitle>{item.title}</CardTitle>
+            </div>
+            <CardDescription>{item.detail}</CardDescription>
+          </div>
+          <Badge variant={tone} className="rounded-md">
+            {item.statusText}
+          </Badge>
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        {item.rows.map((row) => (
+          <SummaryRow key={`${item.id}-${row.label}`} label={row.label} value={row.value} />
+        ))}
+        <div className="flex flex-wrap gap-2 pt-1">
+          {item.actions.map((action) => (
+            <Button
+              key={action.key}
+              variant="outline"
+              size="sm"
+              onClick={() => onNavigate(action.target)}
+            >
+              {action.label}
+            </Button>
+          ))}
         </div>
       </CardContent>
     </Card>

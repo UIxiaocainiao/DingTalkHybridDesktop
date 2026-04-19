@@ -201,6 +201,7 @@ python3 backend/test_api_integrity.py
 - 后端部署说明：`docs/deploy.md`
 - API 说明：`docs/api.md`
 - 设备接入说明：`docs/adb-device-setup.md`
+- 公网远程 ADB 稳定接入：`docs/public-remote-adb-tunnel.md`
 - 项目结构说明：`docs/project-structure.md`
 
 ## 常见问题

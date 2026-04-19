@@ -260,6 +260,10 @@
     gap: var(--space-2);
   }
 
+  .menu-inner--dual {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .menu-inner > .menu-link + .menu-link {
     position: relative;
   }
